@@ -9,7 +9,11 @@
     "dev": "nodemon index.js",
     "setup": "node setup.js",
     "test": "node simple-test.js",
-    "cleanup": "node cleanup.js"
+    "cleanup": "node cleanup.js",
+    "version:patch": "npm version patch && git push --tags",
+    "version:minor": "npm version minor && git push --tags",
+    "version:major": "npm version major && git push --tags",
+    "deploy": "git push origin main"
   },
   "keywords": ["whatsapp", "bot", "reminder", "mongodb"],
   "author": "Your Name",

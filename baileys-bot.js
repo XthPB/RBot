@@ -14,11 +14,13 @@ class AdvancedReminderBot {
         this.authenticatedPhoneNumber = null;
         this.isReady = false;
         this.sock = null;
+        this.autoDeleteMessages = new Map(); // Store messages for auto-deletion
         
         this.initializeDatabase();
         this.initializeBot();
         this.startReminderScheduler();
         this.startCleanupScheduler();
+        this.startAutoDeleteScheduler();
     }
 
     async initializeDatabase() {
@@ -155,6 +157,9 @@ class AdvancedReminderBot {
             case '/new':
                 await this.startReminderFlow(message, userNumber, chatId);
                 break;
+            case '/medicine':
+                await this.startMedicineReminderFlow(message, userNumber, chatId);
+                break;
             case '/list':
             case '/view':
                 await this.listReminders(message, userNumber, chatId);
@@ -234,6 +239,9 @@ class AdvancedReminderBot {
                     break;
                 case 'reschedule':
                     await this.handleRescheduleStep(message, messageText, session, userNumber);
+                    break;
+                case 'medicine':
+                    await this.handleMedicineStep(message, messageText, session, userNumber);
                     break;
             }
         } catch (error) {
@@ -654,7 +662,13 @@ class AdvancedReminderBot {
 ╚═══════════════════════════════════════╝
 
 🔸 */reminder* or */new*
-   Create a new reminder
+   Create a new one-time reminder
+
+🔸 */medicine*
+   Create recurring medicine reminders
+   • Daily, weekdays, or specific days
+   • Multiple times per day
+   • Automatic scheduling
 
 🔸 */list* or */view*
    View all your reminders
@@ -675,14 +689,427 @@ class AdvancedReminderBot {
 ║            🚀 HOW IT WORKS             ║
 ╚═══════════════════════════════════════╝
 
-1️⃣ *Create:* Use /reminder to set up a task
-2️⃣ *Schedule:* Choose date and time
+1️⃣ *Create:* Use /reminder for tasks or /medicine for medications
+2️⃣ *Schedule:* Choose date, time, and frequency
 3️⃣ *Relax:* I'll message you at the right time
-4️⃣ *Respond:* Mark done, reschedule, or snooze
+4️⃣ *Respond:* Mark done, reschedule, or delete
 
-💡 *Pro tip:* Use natural language like "tomorrow at 2 PM" or "next monday at 9 AM"`;
+💡 *Pro tip:* Use natural language like "tomorrow at 2 PM" or "next monday at 9 AM"
+
+💊 *Medicine tip:* Use /medicine for recurring medication reminders with flexible scheduling`;
 
         await this.sendBotMessage(message.key.remoteJid, helpMessage);
+    }
+
+    async startMedicineReminderFlow(message, userNumber) {
+        this.userSessions.delete(userNumber);
+        
+        this.userSessions.set(userNumber, {
+            flow: 'medicine',
+            step: 'medicine_name',
+            data: {},
+            startTime: Date.now()
+        });
+
+        const medicineMessage = `
+╔═══════════════════════════════════════╗
+║         💊 MEDICINE REMINDER           ║
+╚═══════════════════════════════════════╝
+
+✨ *Step 1 of 4: What medicine should I remind you to take?*
+
+📋 *Examples:*
+┌─────────────────────────────────────┐
+│ • Vitamin D tablet                  │
+│ • Blood pressure medication         │
+│ • Insulin injection                 │
+│ • Omega 3 capsule                   │
+│ • Pain relief tablet                │
+└─────────────────────────────────────┘
+
+💊 *Type the medicine name:*`;
+
+        await this.sendBotMessage(message.key.remoteJid, medicineMessage);
+    }
+
+    async handleMedicineStep(message, messageText, session, userNumber) {
+        switch (session.step) {
+            case 'medicine_name':
+                if (messageText.trim().length < 3) {
+                    await this.sendBotMessage(message.key.remoteJid, 
+                        '❌ Please enter a valid medicine name (at least 3 characters).');
+                    return;
+                }
+
+                session.data.medicineName = messageText.trim();
+                session.step = 'frequency';
+
+                const frequencyMessage = `
+✅ *Medicine saved:* "${messageText}"
+
+╔═══════════════════════════════════════╗
+║            📅 SELECT FREQUENCY         ║
+╚═══════════════════════════════════════╝
+
+✨ *Step 2 of 4: How often should I remind you?*
+
+📋 *Frequency options:*
+┌─────────────────────────────────────┐
+│ 1. daily - Every day                │
+│ 2. weekdays - Monday to Friday only │
+│ 3. specific - Choose specific days  │
+│ 4. once - One-time reminder         │
+└─────────────────────────────────────┘
+
+💡 *Type: daily, weekdays, specific, or once*`;
+
+                await this.sendBotMessage(message.key.remoteJid, frequencyMessage);
+                break;
+
+            case 'frequency':
+                const frequency = messageText.toLowerCase().trim();
+                
+                if (!['daily', 'weekdays', 'specific', 'once'].includes(frequency)) {
+                    await this.sendBotMessage(message.key.remoteJid, 
+                        '❌ Please choose: daily, weekdays, specific, or once');
+                    return;
+                }
+
+                session.data.frequency = frequency;
+
+                if (frequency === 'specific') {
+                    session.step = 'specific_days';
+                    
+                    const daysMessage = `
+✅ *Frequency:* Custom days
+
+╔═══════════════════════════════════════╗
+║           📋 SELECT SPECIFIC DAYS      ║
+╚═══════════════════════════════════════╝
+
+✨ *Step 3 of 4: Which days of the week?*
+
+📅 *Choose days (separate with commas):*
+┌─────────────────────────────────────┐
+│ • monday, tuesday, wednesday        │
+│ • mon, tue, wed, thu, fri           │
+│ • saturday, sunday                  │
+│ • all combinations allowed          │
+└─────────────────────────────────────┘
+
+💡 *Example: monday, wednesday, friday*`;
+
+                    await this.sendBotMessage(message.key.remoteJid, daysMessage);
+                } else {
+                    session.step = 'time';
+                    await this.askMedicineTime(message, session);
+                }
+                break;
+
+            case 'specific_days':
+                const daysInput = messageText.toLowerCase().trim();
+                const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+                                 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+                
+                const inputDays = daysInput.split(',').map(d => d.trim());
+                const selectedDays = [];
+                
+                for (const day of inputDays) {
+                    if (validDays.includes(day)) {
+                        // Convert short forms to full forms
+                        const fullDay = day.length <= 3 ? 
+                            ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][
+                                ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].indexOf(day)
+                            ] : day;
+                        
+                        if (!selectedDays.includes(fullDay)) {
+                            selectedDays.push(fullDay);
+                        }
+                    }
+                }
+
+                if (selectedDays.length === 0) {
+                    await this.sendBotMessage(message.key.remoteJid, 
+                        '❌ No valid days found. Please use day names like: monday, tuesday, etc.');
+                    return;
+                }
+
+                session.data.specificDays = selectedDays;
+                session.step = 'time';
+                
+                const confirmDays = selectedDays.map(d => d.charAt(0).toUpperCase() + d.slice(1)).join(', ');
+                await this.sendBotMessage(message.key.remoteJid, `✅ *Selected days:* ${confirmDays}`);
+                await this.askMedicineTime(message, session);
+                break;
+
+            case 'time':
+                const timeInput = messageText.trim();
+                const times = timeInput.split(',').map(t => t.trim());
+                const validTimes = [];
+
+                for (const timeStr of times) {
+                    const parsedTime = this.parseTimeOnly(timeStr);
+                    if (parsedTime) {
+                        validTimes.push(parsedTime);
+                    }
+                }
+
+                if (validTimes.length === 0) {
+                    await this.sendBotMessage(message.key.remoteJid, 
+                        `❌ Couldn't understand time: "${timeInput}"\n\n🔄 Please try formats like:\n• 9 AM, 2:30 PM\n• 14:30, 09:00\n• For multiple times: 8 AM, 2 PM, 8 PM`);
+                    return;
+                }
+
+                session.data.times = validTimes;
+                session.step = 'confirm';
+
+                await this.showMedicineConfirmation(message, session);
+                break;
+
+            case 'confirm':
+                const response = messageText.toLowerCase().trim();
+                
+                if (response === 'yes' || response === 'y') {
+                    await this.saveMedicineReminders(message, session, userNumber);
+                } else if (response === 'no' || response === 'n') {
+                    this.userSessions.delete(userNumber);
+                    await this.sendBotMessage(message.key.remoteJid, 
+                        '❌ Medicine reminder cancelled. Type /medicine to create a new one.');
+                } else {
+                    await this.sendBotMessage(message.key.remoteJid, 
+                        '🤔 Please respond with "yes" to save or "no" to cancel.');
+                }
+                break;
+        }
+    }
+
+    async askMedicineTime(message, session) {
+        const timeMessage = `
+╔═══════════════════════════════════════╗
+║             🕐 SELECT TIME(S)          ║
+╚═══════════════════════════════════════╝
+
+✨ *Step ${session.data.frequency === 'specific' ? '4' : '3'} of 4: What time(s) should I remind you?*
+
+📋 *Time formats:*
+┌─────────────────────────────────────┐
+│ • Single: 9 AM, 2:30 PM, 22:00     │
+│ • Multiple: 8 AM, 2 PM, 8 PM        │
+│ • Special: morning, noon, evening    │
+└─────────────────────────────────────┘
+
+💡 *For multiple times, separate with commas*
+🕐 *Type the time(s):*`;
+
+        await this.sendBotMessage(message.key.remoteJid, timeMessage);
+    }
+
+    async showMedicineConfirmation(message, session) {
+        const { medicineName, frequency, specificDays, times } = session.data;
+        
+        let frequencyText = '';
+        switch (frequency) {
+            case 'daily':
+                frequencyText = 'Every day';
+                break;
+            case 'weekdays':
+                frequencyText = 'Monday to Friday only';
+                break;
+            case 'specific':
+                frequencyText = specificDays.map(d => d.charAt(0).toUpperCase() + d.slice(1)).join(', ');
+                break;
+            case 'once':
+                frequencyText = 'One-time only';
+                break;
+        }
+
+        const timesText = times.map(t => moment(t, 'HH:mm').format('h:mm A')).join(', ');
+
+        const confirmMessage = `
+╔═══════════════════════════════════════╗
+║            ✨ CONFIRMATION             ║
+╚═══════════════════════════════════════╝
+
+🎯 *Review your medicine reminder:*
+
+💊 *Medicine:* ${medicineName}
+📅 *Frequency:* ${frequencyText}
+🕐 *Time(s):* ${timesText}
+📊 *Total reminders:* ${this.calculateTotalReminders(session.data)}
+
+╔═══════════════════════════════════════╗
+║              📝 HOW IT WORKS           ║
+╚═══════════════════════════════════════╝
+
+🤖 *I will send WhatsApp reminders* with:
+• Medicine name and dosage time
+• Options to mark as taken or skip
+• Automatic scheduling for recurring reminders
+
+✅ *Type "yes" to save these reminders*
+❌ *Type "no" to cancel*`;
+
+        await this.sendBotMessage(message.key.remoteJid, confirmMessage);
+    }
+
+    calculateTotalReminders(data) {
+        const { frequency, specificDays, times } = data;
+        let days = 0;
+        
+        switch (frequency) {
+            case 'daily':
+                days = 7;
+                break;
+            case 'weekdays':
+                days = 5;
+                break;
+            case 'specific':
+                days = specificDays.length;
+                break;
+            case 'once':
+                days = 1;
+                break;
+        }
+        
+        return `${times.length} time(s) × ${days} day(s) per week`;
+    }
+
+    parseTimeOnly(timeString) {
+        const input = timeString.toLowerCase().trim();
+        
+        // Special cases
+        if (input === 'morning') return '09:00';
+        if (input === 'noon') return '12:00';
+        if (input === 'afternoon') return '14:00';
+        if (input === 'evening') return '18:00';
+        if (input === 'night') return '21:00';
+        
+        // Time formats
+        const timeFormats = [
+            'h:mm A', 'h A', 'ha', 'h:mm a', 'h a',
+            'HH:mm', 'H:mm', 'HH', 'H'
+        ];
+        
+        for (const format of timeFormats) {
+            const timeOnly = moment(timeString, format, true);
+            if (timeOnly.isValid()) {
+                return timeOnly.format('HH:mm');
+            }
+        }
+        
+        return null;
+    }
+
+    async saveMedicineReminders(message, session, userNumber) {
+        try {
+            const { medicineName, frequency, specificDays, times } = session.data;
+            const savedReminders = [];
+            
+            // Calculate which days to create reminders for
+            let targetDays = [];
+            
+            if (frequency === 'daily') {
+                targetDays = [0, 1, 2, 3, 4, 5, 6]; // All days (Sunday = 0)
+            } else if (frequency === 'weekdays') {
+                targetDays = [1, 2, 3, 4, 5]; // Monday to Friday
+            } else if (frequency === 'specific') {
+                const dayMap = {
+                    'sunday': 0, 'monday': 1, 'tuesday': 2, 'wednesday': 3,
+                    'thursday': 4, 'friday': 5, 'saturday': 6
+                };
+                targetDays = specificDays.map(day => dayMap[day]);
+            } else if (frequency === 'once') {
+                // For once, create for today or tomorrow
+                targetDays = [moment().day()];
+            }
+
+            // Create reminders for next 4 weeks (or just once for 'once')
+            const weeksToCreate = frequency === 'once' ? 1 : 4;
+            
+            for (let week = 0; week < weeksToCreate; week++) {
+                for (const dayOfWeek of targetDays) {
+                    for (const time of times) {
+                        const reminderDate = moment().startOf('week').add(week, 'weeks').day(dayOfWeek);
+                        const [hour, minute] = time.split(':');
+                        reminderDate.hour(parseInt(hour)).minute(parseInt(minute)).second(0);
+                        
+                        // Skip past times for current week
+                        if (week === 0 && reminderDate.isBefore(moment())) {
+                            continue;
+                        }
+
+                        const reminderText = `💊 Take ${medicineName}`;
+                        
+                        const reminderId = await this.db.addReminder(
+                            userNumber,
+                            'Medicine',
+                            reminderText,
+                            reminderDate.format('YYYY-MM-DD HH:mm:ss'),
+                            message.key.remoteJid
+                        );
+                        
+                        savedReminders.push({
+                            id: reminderId,
+                            time: reminderDate.format('ddd MMM D [at] h:mm A')
+                        });
+                    }
+                }
+            }
+
+            const successMessage = `
+╔═══════════════════════════════════════╗
+║              🎉 SUCCESS!               ║
+╚═══════════════════════════════════════╝
+
+✅ *${savedReminders.length} medicine reminders created!*
+
+💊 *Medicine:* ${medicineName}
+📅 *Frequency:* ${this.getFrequencyDescription(session.data)}
+🕐 *Times:* ${times.map(t => moment(t, 'HH:mm').format('h:mm A')).join(', ')}
+
+╔═══════════════════════════════════════╗
+║           📅 NEXT FEW REMINDERS        ║
+╚═══════════════════════════════════════╝
+
+${savedReminders.slice(0, 5).map((r, i) => `${i + 1}. ${r.time}`).join('\n')}
+${savedReminders.length > 5 ? `\n... and ${savedReminders.length - 5} more` : ''}
+
+╔═══════════════════════════════════════╗
+║            🚀 QUICK ACTIONS            ║
+╚═══════════════════════════════════════╝
+
+• /medicine - Create another medicine reminder
+• /list - View all your reminders
+• /delete - Remove specific reminders
+• /help - See all commands`;
+
+            await this.sendBotMessage(message.key.remoteJid, successMessage);
+            this.userSessions.delete(userNumber);
+            
+            console.log(`💊 Medicine reminders saved: "${medicineName}" - ${savedReminders.length} reminders created`);
+
+        } catch (error) {
+            console.error('Save medicine reminder error:', error.message);
+            await this.sendBotMessage(message.key.remoteJid, 
+                '❌ Failed to save medicine reminders. Please try again.');
+        }
+    }
+
+    getFrequencyDescription(data) {
+        const { frequency, specificDays } = data;
+        
+        switch (frequency) {
+            case 'daily':
+                return 'Every day';
+            case 'weekdays':
+                return 'Monday to Friday';
+            case 'specific':
+                return specificDays.map(d => d.charAt(0).toUpperCase() + d.slice(1)).join(', ');
+            case 'once':
+                return 'One-time only';
+            default:
+                return frequency;
+        }
     }
 
     async cancelCurrentFlow(message, userNumber) {
@@ -696,7 +1123,7 @@ class AdvancedReminderBot {
         }
     }
 
-    async sendBotMessage(jid, text) {
+    async sendBotMessage(jid, text, preserveMessage = false) {
         try {
             if (!this.sock || !this.isReady) {
                 console.log('⚠️ Bot not ready, message not sent');
@@ -705,11 +1132,68 @@ class AdvancedReminderBot {
             
             // Prefix all bot messages with "RBot" for easy filtering
             const botMessage = `RBot ${text}`;
-            await this.sock.sendMessage(jid, { text: botMessage });
+            const messageInfo = await this.sock.sendMessage(jid, { text: botMessage });
+            
+            // Schedule auto-delete for most messages (except final reminder notifications)
+            if (!preserveMessage && messageInfo && messageInfo.key) {
+                this.scheduleMessageDeletion(jid, messageInfo.key, 10 * 60 * 1000); // 10 minutes
+            }
+            
             console.log('📤 Bot message sent successfully');
+            return messageInfo;
         } catch (error) {
             console.error('Send message error:', error.message);
         }
+    }
+
+    scheduleMessageDeletion(jid, messageKey, delay) {
+        const deleteId = `${jid}_${messageKey.id}`;
+        
+        // Store deletion info
+        this.autoDeleteMessages.set(deleteId, {
+            jid,
+            messageKey,
+            deleteTime: Date.now() + delay
+        });
+        
+        // Schedule deletion
+        setTimeout(async () => {
+            try {
+                await this.deleteMessage(jid, messageKey);
+                this.autoDeleteMessages.delete(deleteId);
+                console.log('🗑️ Auto-deleted bot message');
+            } catch (error) {
+                console.error('Auto-delete failed:', error.message);
+                this.autoDeleteMessages.delete(deleteId);
+            }
+        }, delay);
+    }
+
+    async deleteMessage(jid, messageKey) {
+        try {
+            if (!this.sock || !this.isReady) return;
+            
+            await this.sock.sendMessage(jid, { 
+                delete: messageKey 
+            });
+        } catch (error) {
+            // Silently fail - message might already be deleted or not deletable
+            console.log('⚠️ Could not delete message (normal for old messages)');
+        }
+    }
+
+    startAutoDeleteScheduler() {
+        // Clean up expired delete tasks every 5 minutes
+        cron.schedule('*/5 * * * *', () => {
+            const now = Date.now();
+            for (const [deleteId, deleteInfo] of this.autoDeleteMessages.entries()) {
+                if (now > deleteInfo.deleteTime + 60000) { // 1 minute grace period
+                    this.autoDeleteMessages.delete(deleteId);
+                }
+            }
+        });
+
+        console.log('🧹 Auto-delete scheduler started');
     }
 
     // Enhanced date parsing with more formats
@@ -847,7 +1331,8 @@ Reply with:
 
 💡 *Or type /reminder to create a new one*`;
 
-            await this.sendBotMessage(reminder.chat_id, reminderMessage);
+            // Preserve reminder notifications - don't auto-delete them
+            await this.sendBotMessage(reminder.chat_id, reminderMessage, true);
             console.log(`🔔 Reminder sent: #${reminder.id} - "${reminder.message}"`);
         } catch (error) {
             console.error('Send reminder error:', error.message);
