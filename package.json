@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node multi-bot-manager.js",
     "dev": "nodemon multi-bot-manager.js",
-    "test": "node validate-deployment.js",
+    "test": "node ci-test.js",
     "validate": "node validate-deployment.js",
     "version:patch": "npm version patch && git push --tags",
     "version:minor": "npm version minor && git push --tags",
