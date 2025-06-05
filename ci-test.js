@@ -50,7 +50,12 @@ requiredFiles.forEach(file => {
 });
 
 // Test 3: Check if bot_sessions directory exists
-test('bot_sessions directory exists', fs.existsSync('bot_sessions'));
+try {
+    const stats = fs.statSync('bot_sessions');
+    test('bot_sessions directory exists', stats.isDirectory());
+} catch (error) {
+    test('bot_sessions directory exists', false);
+}
 
 // Test 4: Check railway.toml configuration
 try {
