@@ -16,6 +16,10 @@ rm -rf .wwebjs_auth*
 echo "📦 Installing fresh dependencies..."
 npm install
 
+# Update package-lock.json to match the latest package.json
+echo "🔄 Updating package-lock.json..."
+npm update --package-lock-only
+
 # Verify installation
 echo "✅ Verifying installation..."
 if [ -f "package-lock.json" ]; then

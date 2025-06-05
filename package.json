@@ -9,11 +9,8 @@
   },
   "scripts": {
     "start": "node multi-bot-manager.js",
-    "baileys": "node baileys-bot.js",
-    "dev": "nodemon index.js",
-    "setup": "node setup.js",
-    "test": "node simple-test.js",
-    "cleanup": "node cleanup.js",
+    "dev": "nodemon multi-bot-manager.js",
+    "test": "node validate-deployment.js",
     "validate": "node validate-deployment.js",
     "version:patch": "npm version patch && git push --tags",
     "version:minor": "npm version minor && git push --tags",
