@@ -240,6 +240,52 @@ class Database {
         }
     }
 
+    async getUserInfo(phoneNumber) {
+        try {
+            const user = await User.findOne({ phoneNumber });
+            return user ? {
+                id: user._id,
+                phoneNumber: user.phoneNumber,
+                name: user.name,
+                timezone: user.timezone,
+                isActive: user.isActive,
+                createdAt: user.createdAt
+            } : null;
+        } catch (error) {
+            console.error('Error getting user info:', error);
+            throw error;
+        }
+    }
+
+    async getAllUsers() {
+        try {
+            const users = await User.find({ isActive: true });
+            return users.map(user => ({
+                id: user._id,
+                phoneNumber: user.phoneNumber,
+                name: user.name,
+                timezone: user.timezone,
+                createdAt: user.createdAt
+            }));
+        } catch (error) {
+            console.error('Error getting all users:', error);
+            throw error;
+        }
+    }
+
+    async deactivateUser(phoneNumber) {
+        try {
+            const result = await User.updateOne(
+                { phoneNumber },
+                { $set: { isActive: false } }
+            );
+            return result.modifiedCount > 0;
+        } catch (error) {
+            console.error('Error deactivating user:', error);
+            throw error;
+        }
+    }
+
     async getReminderCountByPattern(userNumber, recurrencePattern) {
         try {
             const count = await Reminder.countDocuments({

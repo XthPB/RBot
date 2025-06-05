@@ -15,6 +15,9 @@ reminders.db
 # WhatsApp Web session data
 .wwebjs_auth/
 .wwebjs_cache/
+baileys_auth/
+bot_sessions/
+!bot_sessions/.gitkeep
 
 # Logs
 logs/
