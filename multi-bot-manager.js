@@ -380,7 +380,11 @@ class MultiBotManager {
 
     async createBotInstance(userId, userName) {
         try {
-            const authDir = path.join(__dirname, 'bot_sessions', userId);
+            // Ensure bot_sessions directory exists
+            const sessionsDir = path.join(__dirname, 'bot_sessions');
+            await fs.mkdir(sessionsDir, { recursive: true });
+            
+            const authDir = path.join(sessionsDir, userId);
             
             // Create auth directory if it doesn't exist
             await fs.mkdir(authDir, { recursive: true });
