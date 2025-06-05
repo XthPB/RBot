@@ -240,6 +240,62 @@ class Database {
         }
     }
 
+    async getReminderCountByPattern(userNumber, recurrencePattern) {
+        try {
+            const count = await Reminder.countDocuments({
+                userNumber,
+                recurrencePattern,
+                isSent: false
+            });
+            return count;
+        } catch (error) {
+            console.error('Error getting reminder count:', error);
+            throw error;
+        }
+    }
+
+    async getUsersWithLowRecurringReminders(threshold = 5) {
+        try {
+            const pipeline = [
+                {
+                    $match: {
+                        isRecurring: true,
+                        isSent: false,
+                        recurrencePattern: { $ne: null }
+                    }
+                },
+                {
+                    $group: {
+                        _id: {
+                            userNumber: "$userNumber",
+                            recurrencePattern: "$recurrencePattern"
+                        },
+                        count: { $sum: 1 },
+                        chatId: { $first: "$chatId" },
+                        message: { $first: "$message" }
+                    }
+                },
+                {
+                    $match: {
+                        count: { $lte: threshold }
+                    }
+                }
+            ];
+
+            const results = await Reminder.aggregate(pipeline);
+            return results.map(result => ({
+                userNumber: result._id.userNumber,
+                recurrencePattern: result._id.recurrencePattern,
+                remainingCount: result.count,
+                chatId: result.chatId,
+                message: result.message
+            }));
+        } catch (error) {
+            console.error('Error getting users with low recurring reminders:', error);
+            throw error;
+        }
+    }
+
     async close() {
         try {
             await mongoose.connection.close();

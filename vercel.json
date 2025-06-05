@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "baileys-bot.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "database.js",
+          "package.json"
+        ]
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/health",
+      "dest": "/baileys-bot.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/baileys-bot.js"
+    }
+  ],
+  "env": {
+    "NODE_VERSION": "20.x"
+  },
+  "functions": {
+    "baileys-bot.js": {
+      "maxDuration": 300
+    }
+  }
+}

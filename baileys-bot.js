@@ -21,6 +21,7 @@ class AdvancedReminderBot {
         this.startReminderScheduler();
         this.startCleanupScheduler();
         this.startAutoDeleteScheduler();
+        this.startRenewalChecker();
     }
 
     async initializeDatabase() {
@@ -242,6 +243,9 @@ class AdvancedReminderBot {
                     break;
                 case 'medicine':
                     await this.handleMedicineStep(message, messageText, session, userNumber);
+                    break;
+                case 'renewal':
+                    await this.handleRenewalStep(message, messageText, session, userNumber);
                     break;
             }
         } catch (error) {
@@ -1039,13 +1043,16 @@ class AdvancedReminderBot {
                         }
 
                         const reminderText = `💊 Take ${medicineName}`;
+                        const recurrencePattern = `${medicineName}-${frequency}-${JSON.stringify(targetDays)}-${JSON.stringify(times)}`;
                         
                         const reminderId = await this.db.addReminder(
                             userNumber,
                             'Medicine',
                             reminderText,
                             reminderDate.format('YYYY-MM-DD HH:mm:ss'),
-                            message.key.remoteJid
+                            message.key.remoteJid,
+                            true, // isRecurring
+                            recurrencePattern
                         );
                         
                         savedReminders.push({
@@ -1304,6 +1311,296 @@ ${savedReminders.length > 5 ? `\n... and ${savedReminders.length - 5} more` : ''
         });
 
         console.log('🧹 Cleanup scheduler started');
+    }
+
+    startRenewalChecker() {
+        // Check for low recurring reminder counts every 6 hours
+        cron.schedule('0 */6 * * *', async () => {
+            try {
+                await this.checkAndNotifyLowReminders();
+            } catch (error) {
+                console.error('Renewal checker error:', error.message);
+            }
+        });
+
+        console.log('🔄 Renewal checker started');
+    }
+
+    async checkAndNotifyLowReminders() {
+        try {
+            const lowReminderUsers = await this.db.getUsersWithLowRecurringReminders(5);
+            
+            for (const userInfo of lowReminderUsers) {
+                await this.sendRenewalNotification(userInfo);
+            }
+            
+            if (lowReminderUsers.length > 0) {
+                console.log(`🔄 Sent ${lowReminderUsers.length} renewal notifications`);
+            }
+        } catch (error) {
+            console.error('Check low reminders error:', error.message);
+        }
+    }
+
+    async sendRenewalNotification(userInfo) {
+        try {
+            const { userNumber, recurrencePattern, remainingCount, chatId, message } = userInfo;
+            
+            // Parse recurrence pattern to get readable info
+            const patternParts = recurrencePattern.split('-');
+            const medicineName = patternParts[0];
+            const frequency = patternParts[1];
+            
+            const renewalMessage = `
+╔═══════════════════════════════════════╗
+║          🔄 REMINDER RENEWAL           ║
+╚═══════════════════════════════════════╝
+
+⚠️ *Your recurring reminder is running low!*
+
+💊 *Medicine:* ${medicineName}
+📅 *Frequency:* ${this.formatFrequency(frequency)}
+📊 *Remaining:* Only ${remainingCount} reminder${remainingCount > 1 ? 's' : ''} left
+
+╔═══════════════════════════════════════╗
+║           🎯 RENEWAL OPTIONS           ║
+╚═══════════════════════════════════════╝
+
+Would you like to continue this reminder?
+
+✅ *Reply "renew"* - Continue for 4 more weeks
+🔄 *Reply "modify"* - Change schedule and continue  
+❌ *Reply "stop"* - End this recurring reminder
+⏰ *Reply "later"* - Ask me again in 24 hours
+
+💡 *This ensures you never miss your ${medicineName}!*`;
+
+            // Set up renewal session
+            this.userSessions.set(userNumber, {
+                flow: 'renewal',
+                step: 'choice',
+                data: { 
+                    recurrencePattern,
+                    medicineName,
+                    frequency,
+                    originalChatId: chatId
+                },
+                startTime: Date.now()
+            });
+
+            await this.sendBotMessage(chatId, renewalMessage, true);
+            console.log(`🔄 Renewal notification sent for ${medicineName} to user ${userNumber}`);
+            
+        } catch (error) {
+            console.error('Send renewal notification error:', error.message);
+        }
+    }
+
+    formatFrequency(frequency) {
+        switch (frequency) {
+            case 'daily': return 'Every day';
+            case 'weekdays': return 'Monday to Friday';
+            case 'specific': return 'Custom days';
+            case 'once': return 'One-time';
+            default: return frequency;
+        }
+    }
+
+    async handleRenewalStep(message, messageText, session, userNumber) {
+        const response = messageText.toLowerCase().trim();
+        const { recurrencePattern, medicineName, frequency } = session.data;
+        
+        switch (response) {
+            case 'renew':
+                await this.renewRecurringReminder(message, session, userNumber);
+                break;
+            case 'modify':
+                await this.startModifyRenewal(message, session, userNumber);
+                break;
+            case 'stop':
+                await this.stopRecurringReminder(message, session, userNumber);
+                break;
+            case 'later':
+                await this.scheduleRenewalReminder(message, session, userNumber);
+                break;
+            default:
+                await this.sendBotMessage(message.key.remoteJid, 
+                    '🤔 Please reply with: "renew", "modify", "stop", or "later"');
+        }
+    }
+
+    async renewRecurringReminder(message, session, userNumber) {
+        try {
+            const { recurrencePattern, medicineName } = session.data;
+            
+            // Parse the recurrence pattern to recreate reminders
+            const patternParts = recurrencePattern.split('-');
+            const frequency = patternParts[1];
+            const targetDays = JSON.parse(patternParts[2]);
+            const times = JSON.parse(patternParts[3]);
+            
+            const savedReminders = [];
+            
+            // Create reminders for next 4 weeks
+            for (let week = 0; week < 4; week++) {
+                for (const dayOfWeek of targetDays) {
+                    for (const time of times) {
+                        const reminderDate = moment().startOf('week').add(week + 4, 'weeks').day(dayOfWeek);
+                        const [hour, minute] = time.split(':');
+                        reminderDate.hour(parseInt(hour)).minute(parseInt(minute)).second(0);
+                        
+                        const reminderText = `💊 Take ${medicineName}`;
+                        
+                        const reminderId = await this.db.addReminder(
+                            userNumber,
+                            'Medicine',
+                            reminderText,
+                            reminderDate.format('YYYY-MM-DD HH:mm:ss'),
+                            message.key.remoteJid,
+                            true,
+                            recurrencePattern
+                        );
+                        
+                        savedReminders.push({
+                            id: reminderId,
+                            time: reminderDate.format('ddd MMM D [at] h:mm A')
+                        });
+                    }
+                }
+            }
+
+            const successMessage = `
+╔═══════════════════════════════════════╗
+║            ✅ RENEWAL SUCCESS          ║
+╚═══════════════════════════════════════╝
+
+🎉 *${savedReminders.length} new reminders created!*
+
+💊 *Medicine:* ${medicineName}
+📅 *Extended for:* 4 more weeks
+🔄 *Pattern:* Same as before
+
+╔═══════════════════════════════════════╗
+║           📅 NEXT FEW REMINDERS        ║
+╚═══════════════════════════════════════╝
+
+${savedReminders.slice(0, 3).map((r, i) => `${i + 1}. ${r.time}`).join('\n')}
+... and ${savedReminders.length - 3} more
+
+💡 *I'll check again when you have 5 reminders left!*`;
+
+            await this.sendBotMessage(message.key.remoteJid, successMessage);
+            this.userSessions.delete(userNumber);
+            
+            console.log(`✅ Renewed ${savedReminders.length} reminders for ${medicineName}`);
+            
+        } catch (error) {
+            console.error('Renew reminder error:', error.message);
+            await this.sendBotMessage(message.key.remoteJid, 
+                '❌ Failed to renew reminders. Please try creating new ones with /medicine');
+        }
+    }
+
+    async startModifyRenewal(message, session, userNumber) {
+        // Start medicine reminder flow but with modify context
+        this.userSessions.set(userNumber, {
+            flow: 'medicine',
+            step: 'medicine_name',
+            data: { 
+                isRenewal: true,
+                originalPattern: session.data.recurrencePattern,
+                medicineName: session.data.medicineName
+            },
+            startTime: Date.now()
+        });
+
+        const modifyMessage = `
+╔═══════════════════════════════════════╗
+║         🔄 MODIFY & RENEW              ║
+╚═══════════════════════════════════════╝
+
+✨ *Let's set up your renewed reminder!*
+
+💊 *Current medicine:* ${session.data.medicineName}
+
+*Step 1 of 4: Keep the same medicine name or enter a new one:*
+
+💡 *Type the medicine name (or press Enter to keep "${session.data.medicineName}"):*`;
+
+        await this.sendBotMessage(message.key.remoteJid, modifyMessage);
+    }
+
+    async stopRecurringReminder(message, session, userNumber) {
+        try {
+            const { recurrencePattern, medicineName } = session.data;
+            
+            // Delete all future reminders with this pattern
+            const deletedCount = await this.db.clearAllReminders(userNumber);
+            
+            const stopMessage = `
+╔═══════════════════════════════════════╗
+║           🛑 REMINDER STOPPED          ║
+╚═══════════════════════════════════════╝
+
+✅ *Recurring reminder stopped successfully*
+
+💊 *Medicine:* ${medicineName}
+🗑️ *Removed:* All future reminders
+📊 *Status:* No longer recurring
+
+💡 *You can create new reminders anytime with /medicine*`;
+
+            await this.sendBotMessage(message.key.remoteJid, stopMessage);
+            this.userSessions.delete(userNumber);
+            
+            console.log(`🛑 Stopped recurring reminder for ${medicineName}`);
+            
+        } catch (error) {
+            console.error('Stop recurring reminder error:', error.message);
+            await this.sendBotMessage(message.key.remoteJid, 
+                '❌ Failed to stop reminders. Please try /clear to remove all reminders.');
+        }
+    }
+
+    async scheduleRenewalReminder(message, session, userNumber) {
+        try {
+            const { medicineName } = session.data;
+            
+            // Create a one-time reminder to ask again in 24 hours
+            const reminderDate = moment().add(24, 'hours');
+            const reminderText = `🔄 Renewal reminder: Check if you want to continue ${medicineName} reminders`;
+            
+            await this.db.addReminder(
+                userNumber,
+                'System',
+                reminderText,
+                reminderDate.format('YYYY-MM-DD HH:mm:ss'),
+                message.key.remoteJid
+            );
+
+            const laterMessage = `
+╔═══════════════════════════════════════╗
+║           ⏰ REMINDER SCHEDULED        ║
+╚═══════════════════════════════════════╝
+
+✅ *I'll ask you again tomorrow*
+
+💊 *Medicine:* ${medicineName}
+📅 *Will ask again:* ${reminderDate.format('MMM D [at] h:mm A')}
+⏱️ *That's:* ${reminderDate.fromNow()}
+
+💡 *Your current reminders will continue until then*`;
+
+            await this.sendBotMessage(message.key.remoteJid, laterMessage);
+            this.userSessions.delete(userNumber);
+            
+            console.log(`⏰ Scheduled renewal reminder for ${medicineName} in 24 hours`);
+            
+        } catch (error) {
+            console.error('Schedule renewal reminder error:', error.message);
+            await this.sendBotMessage(message.key.remoteJid, 
+                '❌ Failed to schedule reminder. Please check manually tomorrow.');
+        }
     }
 
     async sendReminderNotification(reminder) {

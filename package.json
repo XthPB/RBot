@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "WhatsApp reminder bot with cloud database",
   "main": "index.js",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
     "start": "node baileys-bot.js",
     "baileys": "node baileys-bot.js",
