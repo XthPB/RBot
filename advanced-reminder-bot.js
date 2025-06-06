@@ -1,9 +1,10 @@
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const P = require('pino');
-const moment = require('moment');
+const moment = require('moment-timezone');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const MessageFormatter = require('./message-formatter');
+const TimezoneUtils = require('./timezone-utils');
 
 class AdvancedReminderBot {
     constructor(sock, db, userId) {
@@ -16,6 +17,8 @@ class AdvancedReminderBot {
         this.authenticatedPhoneNumber = null;
         this.startTime = Date.now();
         this.formatter = new MessageFormatter();
+        this.timezoneUtils = new TimezoneUtils();
+        this.userTimezone = null; // Will be auto-detected per user
         
         if (this.sock) {
             this.isReady = true;
@@ -125,25 +128,40 @@ class AdvancedReminderBot {
         try {
             if (!this.authenticatedPhoneNumber) return;
 
+            // Auto-detect user timezone based on phone number
+            const detectedTimezone = await this.timezoneUtils.autoDetectTimezone(this.authenticatedPhoneNumber);
+            this.userTimezone = detectedTimezone;
+
             // Check if user exists in database
             let userInfo = await this.db.getUserInfo(this.authenticatedPhoneNumber);
             
             if (!userInfo) {
-                // Create new user account
-                await this.db.addUser(this.authenticatedPhoneNumber, 'User');
-                console.log(`📝 Created new user account: ${this.authenticatedPhoneNumber}`);
+                // Create new user account with detected timezone
+                await this.db.addUser(this.authenticatedPhoneNumber, 'User', this.userTimezone);
+                console.log(`📝 Created new user account: ${this.authenticatedPhoneNumber} (${this.userTimezone})`);
                 
                 // Send welcome message for new users
                 await this.sendWelcomeMessage();
             } else {
                 // Welcome back existing user
-                console.log(`👋 Welcome back user: ${this.authenticatedPhoneNumber} (${userInfo.name})`);
+                console.log(`👋 Welcome back user: ${this.authenticatedPhoneNumber} (${userInfo.name}) - Timezone: ${userInfo.timezone || this.userTimezone}`);
+                
+                // Update user timezone if different from stored
+                if (userInfo.timezone !== this.userTimezone) {
+                    await this.db.addUser(this.authenticatedPhoneNumber, userInfo.name, this.userTimezone);
+                    console.log(`🕐 Updated timezone for ${this.authenticatedPhoneNumber}: ${userInfo.timezone} → ${this.userTimezone}`);
+                }
+                
+                // Use stored timezone if available
+                this.userTimezone = userInfo.timezone || this.userTimezone;
                 await this.sendWelcomeBackMessage(userInfo);
             }
 
             // Update user's active status and last activity
-            await this.db.addUser(this.authenticatedPhoneNumber, userInfo?.name || 'User');
+            await this.db.addUser(this.authenticatedPhoneNumber, userInfo?.name || 'User', this.userTimezone);
             await this.db.updateUserLastActivity(this.authenticatedPhoneNumber);
+            
+            console.log(`🕐 User timezone set: ${this.userTimezone} for ${this.authenticatedPhoneNumber}`);
             
         } catch (error) {
             console.error(`User account initialization error for ${this.userId}:`, error.message);
@@ -155,12 +173,18 @@ class AdvancedReminderBot {
         try {
             if (!this.sock) return;
             
+            const currentTime = this.timezoneUtils.getCurrentTimeInTimezone(this.userTimezone);
+            const timezoneDisplayName = this.timezoneUtils.getTimezoneDisplayName(this.userTimezone);
+            
             const welcomeMessage = `
 ╔═══════════════════════════════════════╗
 ║           🎉 WELCOME TO RBOT!         ║
 ╚═══════════════════════════════════════╝
 
 ✨ *Your personal WhatsApp reminder assistant*
+
+🕐 *Your timezone:* ${timezoneDisplayName}
+📅 *Current time:* ${currentTime.format('MMM D, YYYY [at] h:mm A')}
 
 🎯 *I can help you with:*
 ┌─────────────────────────────────────┐
@@ -183,6 +207,8 @@ class AdvancedReminderBot {
 
 🔒 **Your data is safe:** All reminders are linked to your phone number, so you'll never lose them even if you log out and back in!
 
+⏰ **Smart timezone:** All times you enter will be understood in your local timezone (${this.userTimezone})
+
 *Ready to get started? Type /help for the complete command list!*`;
 
             // Send to user's private chat
@@ -203,12 +229,18 @@ class AdvancedReminderBot {
             const reminders = await this.db.getUserReminders(this.authenticatedPhoneNumber, 5);
             const totalReminders = await this.db.getUserReminders(this.authenticatedPhoneNumber, 1000);
             
+            const currentTime = this.timezoneUtils.getCurrentTimeInTimezone(this.userTimezone);
+            const timezoneDisplayName = this.timezoneUtils.getTimezoneDisplayName(this.userTimezone);
+            
             const welcomeBackMessage = `
 ╔═══════════════════════════════════════╗
 ║          👋 WELCOME BACK!             ║
 ╚═══════════════════════════════════════╝
 
 ✨ *Hey ${userInfo.name}! Great to see you again!*
+
+🕐 *Your timezone:* ${timezoneDisplayName}
+📅 *Current time:* ${currentTime.format('MMM D, YYYY [at] h:mm A')}
 
 📊 **Your Reminder Status:**
 ┌─────────────────────────────────────┐
@@ -224,7 +256,7 @@ ${reminders.length > 0 ? `
 
 ${reminders.slice(0, 3).map((r, i) => 
 `${i + 1}. ${r.message}
-   📅 ${moment(r.reminder_time).format('MMM D [at] h:mm A')}`
+   📅 ${moment.tz(r.reminder_time, this.userTimezone).format('MMM D [at] h:mm A')}`
 ).join('\n\n')}
 
 ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
@@ -248,7 +280,8 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
 • /list - View all reminders
 • /help - Complete command guide
 
-🔒 **Data Persistence:** Your reminders are always linked to your phone number - no data loss, ever!`;
+🔒 **Data Persistence:** Your reminders are always linked to your phone number - no data loss, ever!
+⏰ **Smart timezone:** All times are shown in your local timezone (${this.userTimezone})`;
 
             // Send to user's private chat
             const userJid = `${this.authenticatedPhoneNumber}@s.whatsapp.net`;
@@ -1456,64 +1489,35 @@ Would you like to continue this reminder?
         }
     }
 
-    // Enhanced date parsing
+    // Enhanced timezone-aware date parsing
     parseDate(dateString) {
-        const input = dateString.toLowerCase().trim();
-        
-        if (input === 'today') return moment();
-        if (input === 'tomorrow') return moment().add(1, 'day');
-        
-        const weekdays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-        for (let i = 0; i < weekdays.length; i++) {
-            if (input.includes(`next ${weekdays[i]}`)) {
-                return moment().day(i + 7);
-            }
-            if (input === weekdays[i]) {
-                const nextDay = moment().day(i);
-                return nextDay.isBefore(moment()) ? nextDay.add(7, 'days') : nextDay;
-            }
+        try {
+            const userTimezone = this.userTimezone || this.timezoneUtils.defaultTimezone;
+            return this.timezoneUtils.parseUserDate(dateString, userTimezone);
+        } catch (error) {
+            console.error('Date parsing error:', error.message);
+            return null;
         }
-        
-        const formats = [
-            'YYYY-MM-DD', 'MM-DD-YYYY', 'DD-MM-YYYY', 'DD/MM/YYYY', 'MM/DD/YYYY',
-            'MMMM D', 'MMM D', 'MMMM D, YYYY', 'MMM D, YYYY'
-        ];
-        
-        for (const format of formats) {
-            const parsed = moment(dateString, format, true);
-            if (parsed.isValid()) {
-                if (!format.includes('YYYY')) {
-                    parsed.year(moment().year());
-                    if (parsed.isBefore(moment(), 'day')) {
-                        parsed.add(1, 'year');
-                    }
-                }
-                return parsed;
-            }
-        }
-        
-        return null;
     }
 
     parseTime(timeString, date) {
-        const input = timeString.toLowerCase().trim();
-        
-        if (input === 'noon') return date.clone().hour(12).minute(0).second(0);
-        if (input === 'midnight') return date.clone().hour(0).minute(0).second(0);
-        
-        const timeFormats = ['h:mm A', 'h A', 'HH:mm', 'H:mm'];
-        
-        for (const format of timeFormats) {
-            const timeOnly = moment(timeString, format, true);
-            if (timeOnly.isValid()) {
+        try {
+            const userTimezone = this.userTimezone || this.timezoneUtils.defaultTimezone;
+            const parsedTime = this.timezoneUtils.parseUserTime(timeString, userTimezone, date);
+            
+            if (parsedTime) {
+                // Combine the parsed time with the selected date
                 return date.clone()
-                    .hour(timeOnly.hour())
-                    .minute(timeOnly.minute())
+                    .hour(parsedTime.hour())
+                    .minute(parsedTime.minute())
                     .second(0);
             }
+            
+            return null;
+        } catch (error) {
+            console.error('Time parsing error:', error.message);
+            return null;
         }
-        
-        return null;
     }
 
     // Add other missing methods as needed...
