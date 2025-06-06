@@ -524,23 +524,26 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
         try {
             const { activity, dateTime } = session.data;
             
+            // Convert timezone-aware datetime to UTC for database storage
+            const utcDateTime = dateTime.utc();
+            
             const reminderId = await this.db.addReminder(
                 userNumber,
                 'User',
                 activity,
-                dateTime.format('YYYY-MM-DD HH:mm:ss'),
+                utcDateTime.format('YYYY-MM-DD HH:mm:ss'),
                 message.key.remoteJid
             );
 
             const successMessage = this.formatter.reminderSuccess({
                 activity,
-                dateTime,
+                dateTime, // Keep original timezone for display
                 id: reminderId
             });
             await this.sendBotMessage(message.key.remoteJid, successMessage);
             this.userSessions.delete(userNumber);
             
-            console.log(`✅ Reminder saved for ${this.userId}: "${activity}" for ${dateTime.format('MMM D [at] h:mm A')}`);
+            console.log(`✅ Reminder saved for ${this.userId}: "${activity}" for ${dateTime.format('MMM D [at] h:mm A')} (${this.userTimezone})`);
 
         } catch (error) {
             console.error('Save reminder error:', error.message);
@@ -1503,14 +1506,19 @@ Would you like to continue this reminder?
     parseTime(timeString, date) {
         try {
             const userTimezone = this.userTimezone || this.timezoneUtils.defaultTimezone;
+            
+            // Parse the time string in user's timezone context
             const parsedTime = this.timezoneUtils.parseUserTime(timeString, userTimezone, date);
             
             if (parsedTime) {
-                // Combine the parsed time with the selected date
-                return date.clone()
-                    .hour(parsedTime.hour())
-                    .minute(parsedTime.minute())
-                    .second(0);
+                // Create a proper timezone-aware moment combining date and time
+                const combinedDateTime = moment.tz(
+                    `${date.format('YYYY-MM-DD')} ${parsedTime.format('HH:mm:ss')}`,
+                    'YYYY-MM-DD HH:mm:ss',
+                    userTimezone
+                );
+                
+                return combinedDateTime;
             }
             
             return null;
