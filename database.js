@@ -63,6 +63,53 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
+    lastActivity: {
+        type: Date,
+        default: Date.now,
+        index: true
+    },
+    dataCleanedAt: {
+        type: Date,
+        default: null
+    },
+    remindersDeleted: {
+        type: Number,
+        default: 0
+    },
+    sessionsDeleted: {
+        type: Number,
+        default: 0
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+});
+
+// Active Session Schema for deployment persistence
+const activeSessionSchema = new mongoose.Schema({
+    userId: {
+        type: String,
+        required: true,
+        unique: true,
+        index: true
+    },
+    userName: {
+        type: String,
+        required: true
+    },
+    phoneNumber: {
+        type: String,
+        required: true
+    },
+    isReady: {
+        type: Boolean,
+        default: false
+    },
+    lastBackup: {
+        type: Date,
+        default: Date.now
+    },
     createdAt: {
         type: Date,
         default: Date.now
@@ -71,6 +118,7 @@ const userSchema = new mongoose.Schema({
 
 const Reminder = mongoose.model('Reminder', reminderSchema);
 const User = mongoose.model('User', userSchema);
+const ActiveSession = mongoose.model('ActiveSession', activeSessionSchema);
 
 class Database {
     constructor() {
@@ -79,10 +127,7 @@ class Database {
 
     async connect(mongoUri) {
         try {
-            await mongoose.connect(mongoUri, {
-                useNewUrlParser: true,
-                useUnifiedTopology: true,
-            });
+            await mongoose.connect(mongoUri);
             this.connected = true;
             console.log('✅ Connected to MongoDB Atlas');
         } catch (error) {
@@ -338,6 +383,239 @@ class Database {
             }));
         } catch (error) {
             console.error('Error getting users with low recurring reminders:', error);
+            throw error;
+        }
+    }
+
+    // Session persistence methods for seamless deployments
+    async updateActiveUserSessions(activeUsers) {
+        try {
+            const operations = activeUsers.map(user => ({
+                updateOne: {
+                    filter: { userId: user.userId },
+                    update: {
+                        $set: {
+                            userName: user.userName,
+                            phoneNumber: user.phoneNumber,
+                            isReady: user.isReady,
+                            lastBackup: user.lastBackup || new Date()
+                        }
+                    },
+                    upsert: true
+                }
+            }));
+
+            const result = await ActiveSession.bulkWrite(operations);
+            return result.modifiedCount + result.upsertedCount;
+        } catch (error) {
+            console.error('Error updating active user sessions:', error);
+            throw error;
+        }
+    }
+
+    async getActiveUserSessions() {
+        try {
+            // Get sessions that were active in the last 5 minutes
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+            
+            const sessions = await ActiveSession.find({
+                isReady: true,
+                lastBackup: { $gte: fiveMinutesAgo }
+            }).sort({ lastBackup: -1 });
+
+            return sessions.map(session => ({
+                userId: session.userId,
+                userName: session.userName,
+                phoneNumber: session.phoneNumber,
+                isReady: session.isReady,
+                lastBackup: session.lastBackup,
+                createdAt: session.createdAt
+            }));
+        } catch (error) {
+            console.error('Error getting active user sessions:', error);
+            throw error;
+        }
+    }
+
+    async removeActiveSession(userId) {
+        try {
+            const result = await ActiveSession.deleteOne({ userId });
+            return result.deletedCount > 0;
+        } catch (error) {
+            console.error('Error removing active session:', error);
+            throw error;
+        }
+    }
+
+    async cleanupOldSessions() {
+        try {
+            // Remove sessions older than 1 hour
+            const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+            
+            const result = await ActiveSession.deleteMany({
+                lastBackup: { $lt: oneHourAgo }
+            });
+            
+            return result.deletedCount;
+        } catch (error) {
+            console.error('Error cleaning up old sessions:', error);
+            throw error;
+        }
+    }
+
+    // Enhanced user management with last activity tracking
+    async updateUserLastActivity(phoneNumber) {
+        try {
+            const result = await User.updateOne(
+                { phoneNumber },
+                { 
+                    $set: { 
+                        lastActivity: new Date(),
+                        isActive: true
+                    } 
+                }
+            );
+            return result.modifiedCount > 0;
+        } catch (error) {
+            console.error('Error updating user last activity:', error);
+            throw error;
+        }
+    }
+
+    // Get inactive users (no activity for specified days)
+    async getInactiveUsers(daysInactive = 60) {
+        try {
+            const cutoffDate = new Date(Date.now() - daysInactive * 24 * 60 * 60 * 1000);
+            
+            const inactiveUsers = await User.find({
+                $or: [
+                    { lastActivity: { $lt: cutoffDate } },
+                    { lastActivity: { $exists: false }, createdAt: { $lt: cutoffDate } }
+                ],
+                isActive: true
+            });
+
+            return inactiveUsers.map(user => ({
+                id: user._id,
+                phoneNumber: user.phoneNumber,
+                name: user.name,
+                createdAt: user.createdAt,
+                lastActivity: user.lastActivity,
+                daysSinceActivity: user.lastActivity ? 
+                    Math.floor((Date.now() - user.lastActivity.getTime()) / (24 * 60 * 60 * 1000)) :
+                    Math.floor((Date.now() - user.createdAt.getTime()) / (24 * 60 * 60 * 1000))
+            }));
+        } catch (error) {
+            console.error('Error getting inactive users:', error);
+            throw error;
+        }
+    }
+
+    // Cleanup inactive user data
+    async cleanupInactiveUserData(phoneNumber) {
+        try {
+            // Delete all reminders for the user
+            const remindersDeleted = await Reminder.deleteMany({ userNumber: phoneNumber });
+            
+            // Delete active sessions for the user
+            const sessionsDeleted = await ActiveSession.deleteMany({ phoneNumber: phoneNumber });
+            
+            // Mark user as inactive instead of deleting (for audit trail)
+            const userUpdated = await User.updateOne(
+                { phoneNumber },
+                { 
+                    $set: { 
+                        isActive: false,
+                        dataCleanedAt: new Date(),
+                        remindersDeleted: remindersDeleted.deletedCount,
+                        sessionsDeleted: sessionsDeleted.deletedCount
+                    } 
+                }
+            );
+
+            return {
+                success: true,
+                remindersDeleted: remindersDeleted.deletedCount,
+                sessionsDeleted: sessionsDeleted.deletedCount,
+                userDeactivated: userUpdated.modifiedCount > 0
+            };
+        } catch (error) {
+            console.error('Error cleaning up inactive user data:', error);
+            throw error;
+        }
+    }
+
+    // Bulk cleanup of multiple inactive users
+    async bulkCleanupInactiveUsers(daysInactive = 60) {
+        try {
+            const inactiveUsers = await this.getInactiveUsers(daysInactive);
+            const cleanupResults = [];
+
+            for (const user of inactiveUsers) {
+                try {
+                    const result = await this.cleanupInactiveUserData(user.phoneNumber);
+                    cleanupResults.push({
+                        phoneNumber: user.phoneNumber,
+                        name: user.name,
+                        daysSinceActivity: user.daysSinceActivity,
+                        ...result
+                    });
+
+                    console.log(`🧹 Cleaned up inactive user: ${user.phoneNumber} (${user.daysSinceActivity} days inactive)`);
+                } catch (error) {
+                    console.error(`Error cleaning up user ${user.phoneNumber}:`, error.message);
+                    cleanupResults.push({
+                        phoneNumber: user.phoneNumber,
+                        name: user.name,
+                        daysSinceActivity: user.daysSinceActivity,
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+
+            return {
+                totalProcessed: inactiveUsers.length,
+                results: cleanupResults,
+                summary: {
+                    successful: cleanupResults.filter(r => r.success).length,
+                    failed: cleanupResults.filter(r => !r.success).length,
+                    totalRemindersDeleted: cleanupResults.reduce((sum, r) => sum + (r.remindersDeleted || 0), 0),
+                    totalSessionsDeleted: cleanupResults.reduce((sum, r) => sum + (r.sessionsDeleted || 0), 0)
+                }
+            };
+        } catch (error) {
+            console.error('Error in bulk cleanup of inactive users:', error);
+            throw error;
+        }
+    }
+
+    // Get database storage statistics
+    async getDatabaseStats() {
+        try {
+            const stats = {
+                users: {
+                    total: await User.countDocuments(),
+                    active: await User.countDocuments({ isActive: true }),
+                    inactive: await User.countDocuments({ isActive: false })
+                },
+                reminders: {
+                    total: await Reminder.countDocuments(),
+                    pending: await Reminder.countDocuments({ isSent: false }),
+                    sent: await Reminder.countDocuments({ isSent: true }),
+                    recurring: await Reminder.countDocuments({ isRecurring: true })
+                },
+                sessions: {
+                    total: await ActiveSession.countDocuments(),
+                    recent: await ActiveSession.countDocuments({
+                        lastBackup: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+                    })
+                }
+            };
+
+            return stats;
+        } catch (error) {
+            console.error('Error getting database stats:', error);
             throw error;
         }
     }

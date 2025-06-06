@@ -7,12 +7,27 @@ restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 healthcheckPath = "/health"
 healthcheckTimeout = 300
+# Enable graceful shutdown for session preservation
+gracefulShutdownTimeout = 30
 
 [environments.production]
 RAILWAY_STATIC_URL = "true"
 NODE_ENV = "production"
+# Enable auto-deployment from GitHub
+RAILWAY_DEPLOYMENT_DOMAIN = "true"
 
 [environments.production.variables]
 # Environment variables will be set in Railway dashboard
 # MONGODB_URI = "your-mongodb-connection-string"
 # PORT = "3000"
+# ENABLE_SESSION_PERSISTENCE = "true"
+# GRACEFUL_SHUTDOWN_TIMEOUT = "30000"
+
+# Auto-deployment configuration
+[deployment]
+source = "github"
+autoRedeploy = true
+branch = "main"
+buildCommand = "npm install"
+startCommand = "npm start"
+watchPaths = ["*.js", "*.json", "package.json", "!node_modules/**"]

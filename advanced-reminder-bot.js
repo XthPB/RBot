@@ -3,6 +3,7 @@ const P = require('pino');
 const moment = require('moment');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
+const MessageFormatter = require('./message-formatter');
 
 class AdvancedReminderBot {
     constructor(sock, db, userId) {
@@ -14,6 +15,7 @@ class AdvancedReminderBot {
         this.isReady = false;
         this.authenticatedPhoneNumber = null;
         this.startTime = Date.now();
+        this.formatter = new MessageFormatter();
         
         if (this.sock) {
             this.isReady = true;
@@ -79,7 +81,7 @@ class AdvancedReminderBot {
         return bot;
     }
 
-    handleConnectionUpdate(update) {
+    async handleConnectionUpdate(update) {
         const { connection, lastDisconnect, qr } = update;
         
         try {
@@ -106,12 +108,154 @@ class AdvancedReminderBot {
                 this.isReady = true;
                 this.authenticatedPhoneNumber = this.sock.user?.id?.split(':')[0];
                 
+                // Initialize or reconnect user account with persistent data
+                await this.initializeUserAccount();
+                
                 console.log(`🎉 Bot ready for user: ${this.userId}`);
                 console.log(`📱 Authenticated as: ${this.authenticatedPhoneNumber}`);
             }
 
         } catch (error) {
             console.error(`Connection update error for ${this.userId}:`, error.message);
+        }
+    }
+
+    // Initialize user account with persistent data
+    async initializeUserAccount() {
+        try {
+            if (!this.authenticatedPhoneNumber) return;
+
+            // Check if user exists in database
+            let userInfo = await this.db.getUserInfo(this.authenticatedPhoneNumber);
+            
+            if (!userInfo) {
+                // Create new user account
+                await this.db.addUser(this.authenticatedPhoneNumber, 'User');
+                console.log(`📝 Created new user account: ${this.authenticatedPhoneNumber}`);
+                
+                // Send welcome message for new users
+                await this.sendWelcomeMessage();
+            } else {
+                // Welcome back existing user
+                console.log(`👋 Welcome back user: ${this.authenticatedPhoneNumber} (${userInfo.name})`);
+                await this.sendWelcomeBackMessage(userInfo);
+            }
+
+            // Update user's active status and last activity
+            await this.db.addUser(this.authenticatedPhoneNumber, userInfo?.name || 'User');
+            await this.db.updateUserLastActivity(this.authenticatedPhoneNumber);
+            
+        } catch (error) {
+            console.error(`User account initialization error for ${this.userId}:`, error.message);
+        }
+    }
+
+    // Send welcome message to new users
+    async sendWelcomeMessage() {
+        try {
+            if (!this.sock) return;
+            
+            const welcomeMessage = `
+╔═══════════════════════════════════════╗
+║           🎉 WELCOME TO RBOT!         ║
+╚═══════════════════════════════════════╝
+
+✨ *Your personal WhatsApp reminder assistant*
+
+🎯 *I can help you with:*
+┌─────────────────────────────────────┐
+│ • 💊 Medicine reminders             │
+│ • 📝 Daily task reminders           │
+│ • ⏰ Custom schedule alerts          │
+│ • 🔄 Recurring notifications        │
+└─────────────────────────────────────┘
+
+╔═══════════════════════════════════════╗
+║         🚀 QUICK START GUIDE          ║
+╚═══════════════════════════════════════╝
+
+*Ready to create your first reminder?*
+
+💡 **Try these commands:**
+• /reminder - Create a custom reminder
+• /medicine - Set up medicine reminders
+• /help - See all available commands
+
+🔒 **Your data is safe:** All reminders are linked to your phone number, so you'll never lose them even if you log out and back in!
+
+*Ready to get started? Type /help for the complete command list!*`;
+
+            // Send to user's private chat
+            const userJid = `${this.authenticatedPhoneNumber}@s.whatsapp.net`;
+            await this.sendBotMessage(userJid, welcomeMessage, true);
+            
+        } catch (error) {
+            console.error(`Send welcome message error for ${this.userId}:`, error.message);
+        }
+    }
+
+    // Send welcome back message to returning users
+    async sendWelcomeBackMessage(userInfo) {
+        try {
+            if (!this.sock) return;
+            
+            // Get user's reminder count
+            const reminders = await this.db.getUserReminders(this.authenticatedPhoneNumber, 5);
+            const totalReminders = await this.db.getUserReminders(this.authenticatedPhoneNumber, 1000);
+            
+            const welcomeBackMessage = `
+╔═══════════════════════════════════════╗
+║          👋 WELCOME BACK!             ║
+╚═══════════════════════════════════════╝
+
+✨ *Hey ${userInfo.name}! Great to see you again!*
+
+📊 **Your Reminder Status:**
+┌─────────────────────────────────────┐
+│ • 📋 Total reminders: ${totalReminders.length}        │
+│ • ⏰ Account created: ${moment(userInfo.createdAt).format('MMM D, YYYY')} │
+│ • 🔄 All your data is restored!     │
+└─────────────────────────────────────┘
+
+${reminders.length > 0 ? `
+╔═══════════════════════════════════════╗
+║       📅 UPCOMING REMINDERS           ║
+╚═══════════════════════════════════════╝
+
+${reminders.slice(0, 3).map((r, i) => 
+`${i + 1}. ${r.message}
+   📅 ${moment(r.reminder_time).format('MMM D [at] h:mm A')}`
+).join('\n\n')}
+
+${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
+
+💡 *Type /list to see all your reminders*` : `
+╔═══════════════════════════════════════╗
+║         🎯 READY TO START?            ║
+╚═══════════════════════════════════════╝
+
+*No reminders found. Let's create some!*
+
+• /reminder - Create a custom reminder
+• /medicine - Set up medicine reminders`}
+
+╔═══════════════════════════════════════╗
+║         🚀 QUICK ACTIONS              ║
+╚═══════════════════════════════════════╝
+
+• /reminder - Create new reminder
+• /medicine - Medicine reminders  
+• /list - View all reminders
+• /help - Complete command guide
+
+🔒 **Data Persistence:** Your reminders are always linked to your phone number - no data loss, ever!`;
+
+            // Send to user's private chat
+            const userJid = `${this.authenticatedPhoneNumber}@s.whatsapp.net`;
+            await this.sendBotMessage(userJid, welcomeBackMessage, true);
+            
+        } catch (error) {
+            console.error(`Send welcome back message error for ${this.userId}:`, error.message);
         }
     }
 
@@ -151,6 +295,9 @@ class AdvancedReminderBot {
             }
 
             console.log(`💬 User ${userNumber} message: "${messageText}" ${isGroupChat ? '(group)' : '(private)'}`);
+            
+            // Update user activity tracking for cleanup purposes
+            await this.db.updateUserLastActivity(userNumber);
             
             // Handle different flows
             if (messageText.startsWith('/')) {
@@ -202,8 +349,8 @@ class AdvancedReminderBot {
                 await this.cancelCurrentFlow(message, userNumber, chatId);
                 break;
             default:
-                await this.sendBotMessage(chatId, 
-                    `❓ Unknown command: ${command}\n\nType /help to see all available commands.`);
+                const unknownMessage = this.formatter.unknownCommand(command);
+                await this.sendBotMessage(chatId, unknownMessage);
         }
     }
 
@@ -217,24 +364,7 @@ class AdvancedReminderBot {
             startTime: Date.now()
         });
 
-        const welcomeMessage = `
-╔═══════════════════════════════════════╗
-║            🔔 CREATE REMINDER          ║
-╚═══════════════════════════════════════╝
-
-✨ *Step 1 of 3: What should I remind you about?*
-
-📋 *Examples:*
-┌─────────────────────────────────────┐
-│ • Call doctor for appointment       │
-│ • Submit quarterly report           │
-│ • Pick up groceries on way home     │
-│ • Team standup meeting              │
-│ • Take evening medication           │
-└─────────────────────────────────────┘
-
-💬 *Type your reminder activity:*`;
-
+        const welcomeMessage = this.formatter.reminderWelcome();
         await this.sendBotMessage(message.key.remoteJid, welcomeMessage);
     }
 
@@ -245,8 +375,8 @@ class AdvancedReminderBot {
         // Session timeout (15 minutes)
         if (Date.now() - session.startTime > 15 * 60 * 1000) {
             this.userSessions.delete(userNumber);
-            await this.sendBotMessage(message.key.remoteJid, 
-                '⏰ Session expired due to inactivity. Type /reminder to start again.');
+            const timeoutMessage = this.formatter.sessionTimeout();
+            await this.sendBotMessage(message.key.remoteJid, timeoutMessage);
             return;
         }
 
@@ -289,25 +419,7 @@ class AdvancedReminderBot {
                 session.data.activity = messageText.trim();
                 session.step = 'date';
 
-                const dateMessage = `
-✅ *Activity saved:* "${messageText}"
-
-╔═══════════════════════════════════════╗
-║            📅 SELECT DATE              ║
-╚═══════════════════════════════════════╝
-
-✨ *Step 2 of 3: When should I remind you?*
-
-📋 *Smart date formats:*
-┌─────────────────────────────────────┐
-│ • today, tomorrow                   │
-│ • next monday, next friday          │
-│ • january 20, march 15              │
-│ • 2025-06-10, 15/06/2025           │
-└─────────────────────────────────────┘
-
-📅 *Type the date:*`;
-
+                const dateMessage = this.formatter.reminderDatePrompt(messageText.trim());
                 await this.sendBotMessage(message.key.remoteJid, dateMessage);
                 break;
 
@@ -315,38 +427,21 @@ class AdvancedReminderBot {
                 const parsedDate = this.parseDate(messageText);
                 
                 if (!parsedDate) {
-                    await this.sendBotMessage(message.key.remoteJid, 
-                        `❌ Couldn't understand date: "${messageText}"\n\n🔄 Please try formats like:\n• today, tomorrow\n• next monday\n• january 20\n• 2025-06-10`);
+                    const errorMessage = this.formatter.errorMessage('date', messageText);
+                    await this.sendBotMessage(message.key.remoteJid, errorMessage);
                     return;
                 }
 
                 if (parsedDate.isBefore(moment(), 'day')) {
-                    await this.sendBotMessage(message.key.remoteJid, 
-                        '❌ Please choose a future date. Can\'t set reminders in the past!');
+                    const pastErrorMessage = this.formatter.errorMessage('past');
+                    await this.sendBotMessage(message.key.remoteJid, pastErrorMessage);
                     return;
                 }
 
                 session.data.date = parsedDate;
                 session.step = 'time';
 
-                const timeMessage = `
-✅ *Date saved:* ${parsedDate.format('dddd, MMMM Do, YYYY')}
-
-╔═══════════════════════════════════════╗
-║             🕐 SELECT TIME             ║
-╚═══════════════════════════════════════╝
-
-✨ *Step 3 of 3: What time should I remind you?*
-
-📋 *Time formats:*
-┌─────────────────────────────────────┐
-│ • 9 AM, 2:30 PM, 11:45 PM          │
-│ • 09:00, 14:30, 23:45              │
-│ • noon, midnight                    │
-└─────────────────────────────────────┘
-
-🕐 *Type the time:*`;
-
+                const timeMessage = this.formatter.reminderTimePrompt(parsedDate);
                 await this.sendBotMessage(message.key.remoteJid, timeMessage);
                 break;
 
@@ -354,44 +449,24 @@ class AdvancedReminderBot {
                 const parsedTime = this.parseTime(messageText, session.data.date);
                 
                 if (!parsedTime) {
-                    await this.sendBotMessage(message.key.remoteJid, 
-                        `❌ Couldn't understand time: "${messageText}"\n\n🔄 Please try formats like:\n• 9 AM, 2:30 PM\n• 14:30, 09:00\n• noon, midnight`);
+                    const timeErrorMessage = this.formatter.errorMessage('time', messageText);
+                    await this.sendBotMessage(message.key.remoteJid, timeErrorMessage);
                     return;
                 }
 
                 if (parsedTime.isBefore(moment())) {
-                    await this.sendBotMessage(message.key.remoteJid, 
-                        '❌ Please choose a future time. Can\'t set reminders in the past!');
+                    const pastTimeErrorMessage = this.formatter.errorMessage('past');
+                    await this.sendBotMessage(message.key.remoteJid, pastTimeErrorMessage);
                     return;
                 }
 
                 session.data.dateTime = parsedTime;
                 session.step = 'confirm';
 
-                const confirmMessage = `
-╔═══════════════════════════════════════╗
-║            ✨ CONFIRMATION             ║
-╚═══════════════════════════════════════╝
-
-🎯 *Review your reminder:*
-
-📝 *Task:* ${session.data.activity}
-📅 *Date:* ${parsedTime.format('dddd, MMMM Do, YYYY')}
-🕐 *Time:* ${parsedTime.format('h:mm A')}
-⏱️ *Scheduled:* ${parsedTime.fromNow()}
-
-╔═══════════════════════════════════════╗
-║              📝 HOW IT WORKS           ║
-╚═══════════════════════════════════════╝
-
-🤖 *I will send you a WhatsApp message* at the scheduled time with:
-• Your reminder task
-• Options to reschedule or mark as done
-• Quick actions for future reminders
-
-✅ *Type "yes" to save this reminder*
-❌ *Type "no" to cancel*`;
-
+                const confirmMessage = this.formatter.reminderConfirmation(
+                    session.data.activity,
+                    parsedTime
+                );
                 await this.sendBotMessage(message.key.remoteJid, confirmMessage);
                 break;
 
@@ -402,8 +477,8 @@ class AdvancedReminderBot {
                     await this.saveReminder(message, session, userNumber);
                 } else if (response === 'no' || response === 'n') {
                     this.userSessions.delete(userNumber);
-                    await this.sendBotMessage(message.key.remoteJid, 
-                        '❌ Reminder cancelled. Type /reminder to create a new one.');
+                    const cancelledMessage = this.formatter.cancelled();
+                    await this.sendBotMessage(message.key.remoteJid, cancelledMessage);
                 } else {
                     await this.sendBotMessage(message.key.remoteJid, 
                         '🤔 Please respond with "yes" to save or "no" to cancel.');
@@ -424,27 +499,11 @@ class AdvancedReminderBot {
                 message.key.remoteJid
             );
 
-            const successMessage = `
-╔═══════════════════════════════════════╗
-║              🎉 SUCCESS!               ║
-╚═══════════════════════════════════════╝
-
-✅ *Reminder created successfully!*
-
-📝 *Task:* ${activity}
-🆔 *ID:* #${reminderId}
-📅 *Scheduled:* ${dateTime.format('dddd, MMMM Do [at] h:mm A')}
-⏱️ *That's:* ${dateTime.fromNow()}
-
-╔═══════════════════════════════════════╗
-║            🚀 QUICK ACTIONS            ║
-╚═══════════════════════════════════════╝
-
-• /reminder - Create another reminder
-• /list - View all your reminders
-• /delete - Remove a specific reminder
-• /help - See all commands`;
-
+            const successMessage = this.formatter.reminderSuccess({
+                activity,
+                dateTime,
+                id: reminderId
+            });
             await this.sendBotMessage(message.key.remoteJid, successMessage);
             this.userSessions.delete(userNumber);
             
@@ -460,68 +519,7 @@ class AdvancedReminderBot {
     async listReminders(message, userNumber) {
         try {
             const reminders = await this.db.getUserReminders(userNumber, 20);
-            
-            if (reminders.length === 0) {
-                await this.sendBotMessage(message.key.remoteJid, `
-╔═══════════════════════════════════════╗
-║            📝 NO REMINDERS             ║
-╚═══════════════════════════════════════╝
-
-🤷‍♂️ *You don't have any reminders yet.*
-
-💡 *Get started:*
-• Type /reminder to create your first one
-• Type /help to see all commands`);
-                return;
-            }
-
-            let listMessage = `
-╔═══════════════════════════════════════╗
-║           📋 YOUR REMINDERS            ║
-╚═══════════════════════════════════════╝
-
-📊 *Total: ${reminders.length} reminder${reminders.length > 1 ? 's' : ''}*
-
-`;
-
-            const pendingReminders = reminders.filter(r => !r.is_sent);
-            const sentReminders = reminders.filter(r => r.is_sent);
-
-            if (pendingReminders.length > 0) {
-                listMessage += `⏳ *PENDING (${pendingReminders.length}):*\n\n`;
-                pendingReminders.forEach((reminder, index) => {
-                    const reminderTime = moment(reminder.reminder_time);
-                    const timeFromNow = reminderTime.fromNow();
-                    
-                    listMessage += `🔸 *#${reminder.id}* ${reminder.message}\n`;
-                    listMessage += `   📅 ${reminderTime.format('MMM D, YYYY [at] h:mm A')}\n`;
-                    listMessage += `   ⏰ ${timeFromNow}\n\n`;
-                });
-            }
-
-            if (sentReminders.length > 0) {
-                listMessage += `✅ *COMPLETED (${sentReminders.length}):*\n\n`;
-                sentReminders.slice(0, 5).forEach((reminder, index) => {
-                    const reminderTime = moment(reminder.reminder_time);
-                    
-                    listMessage += `🔹 *#${reminder.id}* ${reminder.message}\n`;
-                    listMessage += `   📅 ${reminderTime.format('MMM D, YYYY [at] h:mm A')}\n\n`;
-                });
-                
-                if (sentReminders.length > 5) {
-                    listMessage += `   ... and ${sentReminders.length - 5} more\n\n`;
-                }
-            }
-
-            listMessage += `
-╔═══════════════════════════════════════╗
-║            🚀 QUICK ACTIONS            ║
-╚═══════════════════════════════════════╝
-
-• /reminder - Create new reminder
-• /delete - Remove specific reminder by ID
-• /clear - Remove all reminders`;
-            
+            const listMessage = this.formatter.remindersList(reminders);
             await this.sendBotMessage(message.key.remoteJid, listMessage);
 
         } catch (error) {
@@ -547,25 +545,7 @@ class AdvancedReminderBot {
             startTime: Date.now()
         });
 
-        let deleteMessage = `
-╔═══════════════════════════════════════╗
-║           🗑️ DELETE REMINDER           ║
-╚═══════════════════════════════════════╝
-
-📋 *Select reminder to delete:*
-
-`;
-
-        reminders.forEach((reminder, index) => {
-            const reminderTime = moment(reminder.reminder_time);
-            const status = reminder.is_sent ? '✅' : '⏳';
-            
-            deleteMessage += `${status} *#${reminder.id}* ${reminder.message}\n`;
-            deleteMessage += `   📅 ${reminderTime.format('MMM D [at] h:mm A')}\n\n`;
-        });
-
-        deleteMessage += `💬 *Type the ID number* (e.g., "${reminders[0].id}") to delete\n❌ *Type "cancel"* to abort`;
-
+        const deleteMessage = this.formatter.deletePrompt(reminders);
         await this.sendBotMessage(message.key.remoteJid, deleteMessage);
     }
 
@@ -579,24 +559,7 @@ class AdvancedReminderBot {
             startTime: Date.now()
         });
 
-        const medicineMessage = `
-╔═══════════════════════════════════════╗
-║         💊 MEDICINE REMINDER           ║
-╚═══════════════════════════════════════╝
-
-✨ *Step 1 of 4: What medicine should I remind you to take?*
-
-📋 *Examples:*
-┌─────────────────────────────────────┐
-│ • Vitamin D tablet                  │
-│ • Blood pressure medication         │
-│ • Insulin injection                 │
-│ • Omega 3 capsule                   │
-│ • Pain relief tablet                │
-└─────────────────────────────────────┘
-
-💊 *Type the medicine name:*`;
-
+        const medicineMessage = this.formatter.medicineWelcome();
         await this.sendBotMessage(message.key.remoteJid, medicineMessage);
     }
 
@@ -612,25 +575,7 @@ class AdvancedReminderBot {
                 session.data.medicineName = messageText.trim();
                 session.step = 'frequency';
 
-                const frequencyMessage = `
-✅ *Medicine saved:* "${messageText}"
-
-╔═══════════════════════════════════════╗
-║            📅 SELECT FREQUENCY         ║
-╚═══════════════════════════════════════╝
-
-✨ *Step 2 of 4: How often should I remind you?*
-
-📋 *Frequency options:*
-┌─────────────────────────────────────┐
-│ 1. daily - Every day                │
-│ 2. weekdays - Monday to Friday only │
-│ 3. specific - Choose specific days  │
-│ 4. once - One-time reminder         │
-└─────────────────────────────────────┘
-
-💡 *Type: daily, weekdays, specific, or once*`;
-
+                const frequencyMessage = this.formatter.medicineFrequency(messageText.trim());
                 await this.sendBotMessage(message.key.remoteJid, frequencyMessage);
                 break;
 
@@ -995,17 +940,8 @@ ${savedReminders.length > 5 ? `\n... and ${savedReminders.length - 5} more` : ''
         try {
             await this.db.deleteReminder(reminderId, userNumber);
             
-            await this.sendBotMessage(message.key.remoteJid, `
-╔═══════════════════════════════════════╗
-║           ✅ DELETED SUCCESS            ║
-╚═══════════════════════════════════════╝
-
-🗑️ *Reminder #${reminderId} deleted successfully*
-
-📝 *Deleted:* ${reminder.message}
-📅 *Was scheduled:* ${moment(reminder.reminder_time).format('MMM D [at] h:mm A')}
-
-💡 *Type /list to see remaining reminders*`);
+            const deleteSuccessMessage = this.formatter.deleteSuccess(reminder);
+            await this.sendBotMessage(message.key.remoteJid, deleteSuccessMessage);
             
             this.userSessions.delete(userNumber);
             console.log(`🗑️ Reminder deleted for ${this.userId}: #${reminderId} - "${reminder.message}"`);
@@ -1033,23 +969,7 @@ ${savedReminders.length > 5 ? `\n... and ${savedReminders.length - 5} more` : ''
             startTime: Date.now()
         });
 
-        const clearMessage = `
-╔═══════════════════════════════════════╗
-║           ⚠️ CLEAR ALL REMINDERS       ║
-╚═══════════════════════════════════════╝
-
-🚨 *WARNING: This will delete ALL your reminders!*
-
-📊 *You have ${reminders.length} reminder${reminders.length > 1 ? 's' : ''}:*
-• Pending reminders will be cancelled
-• Completed reminders will be removed
-• This action cannot be undone
-
-⚠️ *Are you absolutely sure?*
-
-✅ *Type "DELETE ALL"* to confirm (case sensitive)
-❌ *Type anything else* to cancel`;
-
+        const clearMessage = this.formatter.clearPrompt(reminders.length);
         await this.sendBotMessage(message.key.remoteJid, clearMessage);
     }
 
@@ -1058,15 +978,8 @@ ${savedReminders.length > 5 ? `\n... and ${savedReminders.length - 5} more` : ''
             try {
                 await this.db.clearAllReminders(userNumber);
                 
-                await this.sendBotMessage(message.key.remoteJid, `
-╔═══════════════════════════════════════╗
-║           🧹 ALL CLEARED               ║
-╚═══════════════════════════════════════╝
-
-✅ *Successfully deleted all ${session.data.count} reminders*
-
-🎯 *Your reminder list is now clean*
-💡 *Type /reminder to create a new one*`);
+                const clearSuccessMessage = this.formatter.clearSuccess(session.data.count);
+                await this.sendBotMessage(message.key.remoteJid, clearSuccessMessage);
                 
                 console.log(`🧹 All reminders cleared for user: ${userNumber}`);
 
@@ -1437,40 +1350,7 @@ Would you like to continue this reminder?
     }
 
     async showHelp(message) {
-        const helpMessage = `
-╔═══════════════════════════════════════╗
-║          🤖 REMINDER BOT HELP          ║
-╚═══════════════════════════════════════╝
-
-🎯 *I help you remember important tasks by sending WhatsApp messages at scheduled times.*
-
-╔═══════════════════════════════════════╗
-║            📋 COMMANDS                 ║
-╚═══════════════════════════════════════╝
-
-🔸 */reminder* or */new*
-   Create a new one-time reminder
-
-🔸 */medicine*
-   Create recurring medicine reminders
-
-🔸 */list* or */view*
-   View all your reminders
-
-🔸 */delete*
-   Delete a specific reminder by ID
-
-🔸 */clear* or */erase*
-   Delete ALL reminders (with confirmation)
-
-🔸 */help*
-   Show this help menu
-
-🔸 */cancel*
-   Cancel current operation
-
-💡 *This is your personal bot - only you can use it!*`;
-
+        const helpMessage = this.formatter.helpMessage();
         await this.sendBotMessage(message.key.remoteJid, helpMessage);
     }
 
@@ -1568,26 +1448,7 @@ Would you like to continue this reminder?
 
     async sendReminderNotification(reminder) {
         try {
-            const reminderMessage = `
-╔═══════════════════════════════════════╗
-║              🔔 REMINDER!              ║
-╚═══════════════════════════════════════╝
-
-⏰ *It's time for your reminder!*
-
-📝 *Task:* ${reminder.message}
-🆔 *ID:* #${reminder.id}
-🕐 *Scheduled:* ${moment(reminder.reminder_time).format('h:mm A')}
-
-╔═══════════════════════════════════════╗
-║            🎯 QUICK ACTIONS            ║
-╚═══════════════════════════════════════╝
-
-Reply with:
-• *"done"* - Mark as completed
-• *"reschedule"* - Set new date and time
-• *"delete"* - Remove this reminder`;
-
+            const reminderMessage = this.formatter.reminderNotification(reminder);
             await this.sendBotMessage(reminder.chat_id, reminderMessage, true);
             console.log(`🔔 Reminder sent for ${this.userId}: #${reminder.id}`);
         } catch (error) {

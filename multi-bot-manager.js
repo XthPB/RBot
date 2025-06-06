@@ -15,10 +15,15 @@ class MultiBotManager {
         this.db = new Database();
         this.app = express();
         this.port = process.env.PORT || 3000;
+        this.isShuttingDown = false;
+        this.sessionBackupInterval = null;
         
         this.initializeDatabase();
         this.setupExpressServer();
         this.startCleanupScheduler();
+        this.setupGracefulShutdown();
+        this.startSessionBackup();
+        this.restoreActiveSessions();
     }
 
     async initializeDatabase() {
@@ -549,7 +554,13 @@ Try these commands:
             this.cleanupInactiveBots();
         }, 60 * 60 * 1000); // 1 hour
 
+        // Clean up inactive user data every 24 hours (users inactive for 60+ days)
+        setInterval(() => {
+            this.cleanupInactiveUserData();
+        }, 24 * 60 * 60 * 1000); // 24 hours
+
         console.log('🧹 Bot cleanup scheduler started');
+        console.log('🗑️ Inactive user data cleanup scheduler started (60+ days inactive)');
     }
 
     cleanupInactiveBots() {
@@ -562,6 +573,209 @@ Try these commands:
                 this.bots.delete(userId);
             }
         }
+    }
+
+    // Automatic cleanup of inactive user data (60+ days inactive)
+    async cleanupInactiveUserData() {
+        try {
+            console.log('🗑️ Starting automatic cleanup of inactive user data...');
+            
+            const cleanupResult = await this.db.bulkCleanupInactiveUsers(60); // 60 days
+            
+            if (cleanupResult.totalProcessed > 0) {
+                console.log(`
+╔═══════════════════════════════════════╗
+║        📊 CLEANUP COMPLETED           ║
+╚═══════════════════════════════════════╝
+
+🗑️ *Automatic Data Cleanup Results:*
+
+📋 **Summary:**
+• Total users processed: ${cleanupResult.totalProcessed}
+• Successfully cleaned: ${cleanupResult.summary.successful}
+• Failed cleanups: ${cleanupResult.summary.failed}
+• Reminders deleted: ${cleanupResult.summary.totalRemindersDeleted}
+• Sessions deleted: ${cleanupResult.summary.totalSessionsDeleted}
+
+💾 **Database Storage Optimized!**
+• Freed up space from inactive users (60+ days)
+• All active users and data preserved
+• System performance improved
+
+🔄 *Next cleanup: 24 hours*`);
+
+                // Get database statistics after cleanup
+                const dbStats = await this.db.getDatabaseStats();
+                console.log(`
+📊 **Updated Database Statistics:**
+• Active users: ${dbStats.users.active}
+• Inactive users: ${dbStats.users.inactive}
+• Total reminders: ${dbStats.reminders.total}
+• Pending reminders: ${dbStats.reminders.pending}
+• Active sessions: ${dbStats.sessions.recent}`);
+
+            } else {
+                console.log('✅ No inactive users found for cleanup (all users active within 60 days)');
+            }
+
+        } catch (error) {
+            console.error('❌ Error during inactive user data cleanup:', error.message);
+        }
+    }
+
+    // Session backup and restore for seamless deployments
+    async startSessionBackup() {
+        // Backup session data every 30 seconds
+        this.sessionBackupInterval = setInterval(async () => {
+            await this.backupActiveSessions();
+        }, 30000);
+
+        console.log('💾 Session backup scheduler started');
+    }
+
+    async backupActiveSessions() {
+        try {
+            const activeUsers = [];
+            
+            for (const [userId, bot] of this.bots.entries()) {
+                if (bot.isReady && bot.authenticatedPhoneNumber) {
+                    activeUsers.push({
+                        userId,
+                        userName: bot.userName,
+                        phoneNumber: bot.authenticatedPhoneNumber,
+                        isReady: bot.isReady,
+                        lastBackup: new Date()
+                    });
+                }
+            }
+
+            // Store in database for persistence across deployments
+            if (activeUsers.length > 0) {
+                await this.db.updateActiveUserSessions(activeUsers);
+            }
+        } catch (error) {
+            console.error('Error backing up sessions:', error);
+        }
+    }
+
+    async restoreActiveSessions() {
+        try {
+            console.log('🔄 Restoring active sessions from previous deployment...');
+            
+            const activeSessions = await this.db.getActiveUserSessions();
+            
+            for (const session of activeSessions) {
+                if (!this.bots.has(session.userId)) {
+                    console.log(`🔄 Restoring bot session for user: ${session.userId}`);
+                    await this.createBotInstance(session.userId, session.userName);
+                }
+            }
+            
+            console.log(`✅ Restored ${activeSessions.length} active bot sessions`);
+        } catch (error) {
+            console.error('Error restoring sessions:', error);
+        }
+    }
+
+    setupGracefulShutdown() {
+        // Handle deployment signals gracefully
+        process.on('SIGTERM', async () => {
+            console.log('🔄 Received SIGTERM - performing graceful shutdown for deployment...');
+            await this.gracefulShutdownForDeployment();
+        });
+
+        process.on('SIGINT', async () => {
+            console.log('🔄 Received SIGINT - performing graceful shutdown...');
+            await this.gracefulShutdownForDeployment();
+        });
+
+        // Cleanup on exit
+        process.on('exit', async () => {
+            if (this.sessionBackupInterval) {
+                clearInterval(this.sessionBackupInterval);
+            }
+        });
+    }
+
+    async gracefulShutdownForDeployment() {
+        console.log('💾 Backing up all active sessions before shutdown...');
+        this.isShuttingDown = true;
+
+        try {
+            // Final backup of all sessions
+            await this.backupActiveSessions();
+            
+            // Give time for sessions to be saved
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            console.log('✅ Session backup completed - ready for new deployment');
+            
+            // Close database connection
+            await this.db.close();
+            
+        } catch (error) {
+            console.error('Error during graceful shutdown:', error);
+        } finally {
+            process.exit(0);
+        }
+    }
+
+    // Enhanced connection handling for deployments
+    async handleConnectionUpdate(update, botInstance) {
+        const { connection, lastDisconnect, qr } = update;
+        
+        try {
+            if (qr) {
+                botInstance.currentQR = qr;
+                console.log(`📱 QR code generated for ${botInstance.userId}`);
+            }
+            
+            if (connection === 'close') {
+                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+                
+                if (shouldReconnect && !this.isShuttingDown) {
+                    console.log(`🔄 Reconnecting bot ${botInstance.userId}...`);
+                    setTimeout(() => {
+                        this.recreateBotInstance(botInstance.userId);
+                    }, 3000);
+                } else if (this.isShuttingDown) {
+                    console.log(`📴 Bot ${botInstance.userId} - graceful shutdown in progress`);
+                } else {
+                    console.log(`📴 Bot ${botInstance.userId} logged out`);
+                    this.bots.delete(botInstance.userId);
+                    // Mark as inactive in database
+                    await this.db.deactivateUser(botInstance.userId);
+                }
+                
+                botInstance.isReady = false;
+            } 
+            
+            if (connection === 'open') {
+                botInstance.isReady = true;
+                botInstance.authenticatedPhoneNumber = botInstance.sock.user?.id?.split(':')[0];
+                botInstance.currentQR = null;
+                
+                console.log(`🎉 Bot ${botInstance.userId} is ready! Phone: ${botInstance.authenticatedPhoneNumber}`);
+                
+                // Update database with active status
+                await this.db.addUser(botInstance.userId, botInstance.userName, 'Asia/Calcutta');
+                
+                // Send welcome message only for new connections (not restored sessions)
+                if (!this.isRestoredSession(botInstance.userId)) {
+                    this.sendWelcomeMessage(botInstance);
+                } else {
+                    console.log(`🔄 Restored session for ${botInstance.userId} - skipping welcome message`);
+                }
+            }
+
+        } catch (error) {
+            console.error(`Connection update error for ${botInstance.userId}:`, error.message);
+        }
+    }
+
+    isRestoredSession(userId) {
+        // Check if this is a restored session from previous deployment
+        return this.bots.has(userId) && this.bots.get(userId).isRestored;
     }
 
     // Graceful shutdown
