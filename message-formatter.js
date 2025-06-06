@@ -3,6 +3,8 @@
  * Creates mobile-friendly, responsive message formats
  */
 
+const moment = require('moment-timezone');
+
 class MessageFormatter {
     constructor() {
         this.maxWidth = 35; // Optimal for most mobile screens
@@ -95,12 +97,25 @@ ${'─'.repeat(12)}
     }
 
     reminderConfirmation(activity, dateTime) {
+        // Ensure we're calculating fromNow() correctly with current time
+        const now = moment();
+        const timeDiff = dateTime.diff(now);
+        let timeToGo;
+        
+        if (timeDiff < 0) {
+            timeToGo = 'in the past';
+        } else if (timeDiff < 60000) { // Less than 1 minute
+            timeToGo = 'in less than 1 minute';
+        } else {
+            timeToGo = dateTime.fromNow();
+        }
+
         return `${this.emojis.success} *REVIEW REMINDER*
 ${'─'.repeat(16)}
 
 📝 *Task:* ${activity}
 📅 *When:* ${dateTime.format('MMM D, h:mm A')}
-⏱️ *In:* ${dateTime.fromNow()}
+⏱️ *In:* ${timeToGo}
 
 *Ready to save?*
 ✅ Reply "yes" to save
@@ -109,13 +124,27 @@ ${'─'.repeat(16)}
 
     reminderSuccess(data) {
         const { activity, dateTime, id } = data;
+        
+        // Ensure we're calculating fromNow() correctly with current time
+        const now = moment();
+        const timeDiff = dateTime.diff(now);
+        let timeToGo;
+        
+        if (timeDiff < 0) {
+            timeToGo = 'in the past';
+        } else if (timeDiff < 60000) { // Less than 1 minute
+            timeToGo = 'in less than 1 minute';
+        } else {
+            timeToGo = dateTime.fromNow();
+        }
+        
         return `${this.emojis.success} *REMINDER SAVED!*
 ${'─'.repeat(17)}
 
 ${this.emojis.id} #${id}
 📝 ${activity}
 📅 ${dateTime.format('MMM D, h:mm A')}
-⏱️ ${dateTime.fromNow()}
+⏱️ ${timeToGo}
 
 *Quick actions:*
 ▶️ /reminder - Create another
