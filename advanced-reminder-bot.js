@@ -461,6 +461,9 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
                 case 'renewal':
                     await this.handleRenewalStep(message, messageText, session, userNumber);
                     break;
+                case 'timezone':
+                    await this.handleTimezoneSession(message, messageText, session, userNumber);
+                    break;
             }
         } catch (error) {
             console.error('Session flow error:', error.message);
@@ -2068,13 +2071,73 @@ Would you like to update your timezone?
     parseTime(timeString, date) {
         try {
             console.log(`🕐 Parsing time: "${timeString}" for date: ${date.format('YYYY-MM-DD')} in timezone: ${this.userTimezone}`);
-            const result = this.timezoneUtils.parseUserTime(timeString, this.userTimezone, date);
-            if (result) {
+            
+            const input = timeString.toLowerCase().trim();
+            
+            // Handle special keywords first
+            if (input === 'noon') {
+                const result = date.clone().hour(12).minute(0).second(0);
                 console.log(`✅ Time parsed successfully: ${result.format('YYYY-MM-DD HH:mm:ss')} (${this.userTimezone})`);
-            } else {
-                console.log(`❌ Failed to parse time: "${timeString}"`);
+                return result;
             }
-            return result;
+            if (input === 'midnight') {
+                const result = date.clone().hour(0).minute(0).second(0);
+                console.log(`✅ Time parsed successfully: ${result.format('YYYY-MM-DD HH:mm:ss')} (${this.userTimezone})`);
+                return result;
+            }
+            if (input === 'morning') {
+                const result = date.clone().hour(9).minute(0).second(0);
+                console.log(`✅ Time parsed successfully: ${result.format('YYYY-MM-DD HH:mm:ss')} (${this.userTimezone})`);
+                return result;
+            }
+            if (input === 'afternoon') {
+                const result = date.clone().hour(14).minute(0).second(0);
+                console.log(`✅ Time parsed successfully: ${result.format('YYYY-MM-DD HH:mm:ss')} (${this.userTimezone})`);
+                return result;
+            }
+            if (input === 'evening') {
+                const result = date.clone().hour(18).minute(0).second(0);
+                console.log(`✅ Time parsed successfully: ${result.format('YYYY-MM-DD HH:mm:ss')} (${this.userTimezone})`);
+                return result;
+            }
+            if (input === 'night') {
+                const result = date.clone().hour(21).minute(0).second(0);
+                console.log(`✅ Time parsed successfully: ${result.format('YYYY-MM-DD HH:mm:ss')} (${this.userTimezone})`);
+                return result;
+            }
+
+            // Parse time formats - comprehensive list
+            const timeFormats = [
+                'h:mm A',   // 9:30 AM, 2:30 PM
+                'h A',      // 9 AM, 2 PM
+                'ha',       // 9am, 2pm
+                'h:mm a',   // 9:30 am, 2:30 pm
+                'h a',      // 9 am, 2 pm
+                'HH:mm',    // 14:30, 09:00, 15:00
+                'H:mm',     // 9:30, 14:30
+                'HH',       // 14, 09, 15
+                'H'         // 9, 14, 15
+            ];
+            
+            for (const format of timeFormats) {
+                // Parse time in user's timezone
+                const timeOnly = moment.tz(timeString, format, this.userTimezone, true);
+                if (timeOnly.isValid()) {
+                    console.log(`✅ Parsed time "${timeString}" with format "${format}" -> ${timeOnly.hour()}:${timeOnly.minute()}`);
+                    
+                    // Combine with the date in user's timezone
+                    const combined = date.clone()
+                        .hour(timeOnly.hour())
+                        .minute(timeOnly.minute())
+                        .second(0);
+                    
+                    console.log(`✅ Time parsed successfully: ${combined.format('YYYY-MM-DD HH:mm:ss')} (${this.userTimezone})`);
+                    return combined;
+                }
+            }
+            
+            console.log(`❌ Failed to parse time: "${timeString}"`);
+            return null;
         } catch (error) {
             console.error('Time parsing error:', error.message);
             return null;
