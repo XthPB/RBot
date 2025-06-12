@@ -1526,122 +1526,6 @@ Would you like to continue this reminder?
         }
     }
 
-    // Simple Indian timezone date parsing
-    parseDate(dateString) {
-        try {
-            const input = dateString.toLowerCase().trim();
-            const now = moment.tz('Asia/Calcutta');
-            
-            // Handle relative dates
-            if (input === 'today') {
-                return now.clone().startOf('day');
-            }
-            if (input === 'tomorrow') {
-                return now.clone().add(1, 'day').startOf('day');
-            }
-            
-            // Handle weekdays
-            const weekdays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-            for (let i = 0; i < weekdays.length; i++) {
-                if (input.includes(`next ${weekdays[i]}`)) {
-                    return now.clone().day(i + 7).startOf('day');
-                }
-                if (input === weekdays[i]) {
-                    const nextDay = now.clone().day(i).startOf('day');
-                    return nextDay.isBefore(now, 'day') ? nextDay.add(7, 'days') : nextDay;
-                }
-            }
-            
-            // Try parsing different date formats
-            const dateFormats = [
-                'YYYY-MM-DD', 'DD-MM-YYYY', 'DD/MM/YYYY', 'MM/DD/YYYY',
-                'MMMM D', 'MMM D', 'MMMM D, YYYY', 'MMM D, YYYY'
-            ];
-            
-            for (const format of dateFormats) {
-                const parsed = moment.tz(dateString, format, 'Asia/Calcutta', true);
-                if (parsed.isValid()) {
-                    // If no year specified, assume current year or next year if date has passed
-                    if (!format.includes('YYYY')) {
-                        parsed.year(now.year());
-                        if (parsed.isBefore(now, 'day')) {
-                            parsed.add(1, 'year');
-                        }
-                    }
-                    return parsed.startOf('day');
-                }
-            }
-            
-            console.log(`❌ Could not parse date: "${dateString}"`);
-            return null;
-        } catch (error) {
-            console.error('Date parsing error:', error.message);
-            return null;
-        }
-    }
-
-    parseTime(timeString, date) {
-        try {
-            const input = timeString.toLowerCase().trim();
-            
-            console.log(`🕐 Parsing time: "${timeString}" for date: ${date.format('YYYY-MM-DD')}`);
-            
-            // Handle special keywords
-            if (input === 'noon') {
-                return date.clone().hour(12).minute(0).second(0);
-            }
-            if (input === 'midnight') {
-                return date.clone().hour(0).minute(0).second(0);
-            }
-            if (input === 'morning') {
-                return date.clone().hour(9).minute(0).second(0);
-            }
-            if (input === 'afternoon') {
-                return date.clone().hour(14).minute(0).second(0);
-            }
-            if (input === 'evening') {
-                return date.clone().hour(18).minute(0).second(0);
-            }
-            if (input === 'night') {
-                return date.clone().hour(21).minute(0).second(0);
-            }
-
-            // Parse time formats - try each one
-            const timeFormats = [
-                'h:mm A',   // 9:30 AM
-                'h A',      // 9 AM
-                'ha',       // 9am
-                'h:mm a',   // 9:30 am
-                'h a',      // 9 am
-                'HH:mm',    // 14:30
-                'H:mm',     // 9:30
-                'HH',       // 14
-                'H'         // 9
-            ];
-            
-            for (const format of timeFormats) {
-                const timeOnly = moment(timeString, format, true);
-                if (timeOnly.isValid()) {
-                    console.log(`✅ Parsed time "${timeString}" with format "${format}" -> ${timeOnly.hour()}:${timeOnly.minute()}`);
-                    
-                    // Combine with the date in Indian timezone
-                    const combined = date.clone()
-                        .hour(timeOnly.hour())
-                        .minute(timeOnly.minute())
-                        .second(0);
-                    
-                    console.log(`✅ Combined datetime: ${combined.format('YYYY-MM-DD HH:mm:ss')} (IST)`);
-                    return combined;
-                }
-            }
-            
-            console.log(`❌ Could not parse time: "${timeString}"`);
-            return null;
-        } catch (error) {
-            console.error('Time parsing error:', error.message);
-            return null;
-        }
-    }
 
     // Add other missing methods as needed...
     async handleReminderResponse(message, messageText, userNumber, chatId) {
@@ -2164,10 +2048,17 @@ Would you like to update your timezone?
         }
     }
 
-    // Update parsing methods to use timezone utils
+    // Enhanced parsing methods using timezone utils
     parseDate(dateString) {
         try {
-            return this.timezoneUtils.parseUserDate(dateString, this.userTimezone);
+            console.log(`📅 Parsing date: "${dateString}" in timezone: ${this.userTimezone}`);
+            const result = this.timezoneUtils.parseUserDate(dateString, this.userTimezone);
+            if (result) {
+                console.log(`✅ Date parsed successfully: ${result.format('YYYY-MM-DD')}`);
+            } else {
+                console.log(`❌ Failed to parse date: "${dateString}"`);
+            }
+            return result;
         } catch (error) {
             console.error('Date parsing error:', error.message);
             return null;
@@ -2176,7 +2067,14 @@ Would you like to update your timezone?
 
     parseTime(timeString, date) {
         try {
-            return this.timezoneUtils.parseUserTime(timeString, this.userTimezone, date);
+            console.log(`🕐 Parsing time: "${timeString}" for date: ${date.format('YYYY-MM-DD')} in timezone: ${this.userTimezone}`);
+            const result = this.timezoneUtils.parseUserTime(timeString, this.userTimezone, date);
+            if (result) {
+                console.log(`✅ Time parsed successfully: ${result.format('YYYY-MM-DD HH:mm:ss')} (${this.userTimezone})`);
+            } else {
+                console.log(`❌ Failed to parse time: "${timeString}"`);
+            }
+            return result;
         } catch (error) {
             console.error('Time parsing error:', error.message);
             return null;
