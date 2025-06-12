@@ -128,10 +128,7 @@ class AdvancedReminderBot {
         try {
             if (!this.authenticatedPhoneNumber) return;
 
-            // Use fixed Indian timezone
-            this.userTimezone = 'Asia/Calcutta';
-
-            // Check if user exists in database
+            // Check if user exists in database first
             let userInfo = await this.db.getUserInfo(this.authenticatedPhoneNumber);
             
             console.log(`🔍 Checking user: ${this.authenticatedPhoneNumber}, found:`, userInfo ? 'YES' : 'NO');
@@ -145,31 +142,65 @@ class AdvancedReminderBot {
             }
             
             if (!userInfo) {
-                // Create new user account with Indian timezone
-                await this.db.addUser(this.authenticatedPhoneNumber, 'User', this.userTimezone);
-                console.log(`📝 Created new user account: ${this.authenticatedPhoneNumber} (${this.userTimezone})`);
-                
-                // Send welcome message for new users
-                await this.sendWelcomeMessage();
+                // NEW USER - Ask for timezone preference
+                console.log(`📝 NEW USER detected: ${this.authenticatedPhoneNumber}`);
+                await this.askUserTimezone();
             } else {
-                // Welcome back existing user
-                console.log(`👋 Welcome back user: ${this.authenticatedPhoneNumber} (${userInfo.name}) - Timezone: ${userInfo.timezone || this.userTimezone}`);
+                // EXISTING USER - Welcome back
+                console.log(`👋 EXISTING USER detected: ${this.authenticatedPhoneNumber} (${userInfo.name})`);
                 
-                // Use stored timezone if available, otherwise use Indian timezone
+                // Use stored timezone if available, otherwise default to Asia/Calcutta
                 this.userTimezone = userInfo.timezone || 'Asia/Calcutta';
                 
                 // Send welcome back message
                 await this.sendWelcomeBackMessage(userInfo);
+                
+                // Update user's active status and last activity
+                await this.db.updateUserLastActivity(this.authenticatedPhoneNumber);
             }
-
-            // Update user's active status and last activity
-            await this.db.addUser(this.authenticatedPhoneNumber, userInfo?.name || 'User', this.userTimezone);
-            await this.db.updateUserLastActivity(this.authenticatedPhoneNumber);
             
             console.log(`🕐 User timezone set: ${this.userTimezone} for ${this.authenticatedPhoneNumber}`);
             
         } catch (error) {
             console.error(`User account initialization error for ${this.userId}:`, error.message);
+        }
+    }
+
+    // Ask new users about their timezone preference
+    async askUserTimezone() {
+        try {
+            if (!this.sock || !this.authenticatedPhoneNumber) return;
+
+            const timezoneMessage = `
+╔═══════════════════════════════════════╗
+║           🎉 WELCOME TO RBOT!         ║
+╚═══════════════════════════════════════╝
+
+✨ *Your personal WhatsApp reminder assistant*
+
+🌍 *To provide accurate reminders, please select your timezone:*
+
+**Choose your location:**
+• Type "1" for **India** (Asia/Calcutta - IST)
+• Type "2" for **Fort Wayne, Indiana, US** (America/Indiana/Indianapolis - EST/EDT)
+
+💡 *This ensures all your reminders are scheduled in your local time.*
+
+🔢 *Please type 1 or 2:*`;
+
+            const userJid = `${this.authenticatedPhoneNumber}@s.whatsapp.net`;
+            await this.sendBotMessage(userJid, timezoneMessage, true);
+
+            // Set up timezone selection session
+            this.userSessions.set(this.authenticatedPhoneNumber, {
+                flow: 'timezone_setup',
+                step: 'selection',
+                data: {},
+                startTime: Date.now()
+            });
+
+        } catch (error) {
+            console.error(`Ask user timezone error for ${this.userId}:`, error.message);
         }
     }
 
@@ -234,8 +265,19 @@ class AdvancedReminderBot {
             const reminders = await this.db.getUserReminders(this.authenticatedPhoneNumber, 5);
             const totalReminders = await this.db.getUserReminders(this.authenticatedPhoneNumber, 1000);
             
-            const currentTime = moment.tz('Asia/Calcutta');
-            const timezoneDisplayName = 'India Standard Time (IST, UTC+05:30)';
+            // Use user's stored timezone
+            const userTimezone = userInfo.timezone || 'Asia/Calcutta';
+            const currentTime = moment.tz(userTimezone);
+            
+            // Get timezone display name
+            let timezoneDisplayName;
+            if (userTimezone === 'Asia/Calcutta') {
+                timezoneDisplayName = 'India Standard Time (IST, UTC+05:30)';
+            } else if (userTimezone === 'America/Indiana/Indianapolis') {
+                timezoneDisplayName = 'Eastern Time - Fort Wayne, Indiana (EST/EDT, UTC-05:00/-04:00)';
+            } else {
+                timezoneDisplayName = userTimezone;
+            }
             
             const welcomeBackMessage = `
 ╔═══════════════════════════════════════╗
@@ -261,7 +303,7 @@ ${reminders.length > 0 ? `
 
 ${reminders.slice(0, 3).map((r, i) => 
 `${i + 1}. ${r.message}
-   📅 ${moment.tz(r.reminder_time, 'UTC').tz('Asia/Calcutta').format('MMM D [at] h:mm A')}`
+   📅 ${moment.tz(r.reminder_time, 'UTC').tz(userTimezone).format('MMM D [at] h:mm A')}`
 ).join('\n\n')}
 
 ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
@@ -286,7 +328,7 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
 • /help - Complete command guide
 
 🔒 **Data Persistence:** Your reminders are always linked to your phone number - no data loss, ever!
-⏰ **Smart timezone:** All times are shown in your local timezone (${this.userTimezone})`;
+⏰ **Smart timezone:** All times are shown in your local timezone (${userTimezone})`;
 
             // Send to user's private chat
             const userJid = `${this.authenticatedPhoneNumber}@s.whatsapp.net`;
@@ -437,6 +479,9 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
                     break;
                 case 'renewal':
                     await this.handleRenewalStep(message, messageText, session, userNumber);
+                    break;
+                case 'timezone_setup':
+                    await this.handleTimezoneSetup(message, messageText, session, userNumber);
                     break;
             }
         } catch (error) {
@@ -1652,6 +1697,81 @@ Would you like to continue this reminder?
             }
         } catch (error) {
             console.error('Handle reminder response error:', error.message);
+        }
+    }
+
+    async handleTimezoneSetup(message, messageText, session, userNumber) {
+        try {
+            const choice = messageText.trim();
+            
+            if (choice === '1') {
+                // India timezone selected
+                this.userTimezone = 'Asia/Calcutta';
+                await this.completeTimezoneSetup(message, userNumber, 'Asia/Calcutta', 'India Standard Time (IST, UTC+05:30)');
+            } else if (choice === '2') {
+                // Fort Wayne, Indiana timezone selected
+                this.userTimezone = 'America/Indiana/Indianapolis';
+                await this.completeTimezoneSetup(message, userNumber, 'America/Indiana/Indianapolis', 'Eastern Time - Fort Wayne, Indiana (EST/EDT, UTC-05:00/-04:00)');
+            } else {
+                await this.sendBotMessage(message.key.remoteJid, 
+                    '❌ Please type "1" for India or "2" for Fort Wayne, Indiana.');
+                return;
+            }
+        } catch (error) {
+            console.error(`Timezone setup error for ${userNumber}:`, error.message);
+            await this.sendBotMessage(message.key.remoteJid, 
+                '❌ Error setting up timezone. Please try again.');
+        }
+    }
+
+    async completeTimezoneSetup(message, userNumber, timezone, displayName) {
+        try {
+            // Create user account with selected timezone
+            await this.db.addUser(this.authenticatedPhoneNumber, 'User', timezone);
+            console.log(`✅ User created with timezone: ${this.authenticatedPhoneNumber} (${timezone})`);
+            
+            // Update last activity
+            await this.db.updateUserLastActivity(this.authenticatedPhoneNumber);
+            
+            // Clear the session
+            this.userSessions.delete(userNumber);
+            
+            // Send completion message with selected timezone
+            const currentTime = moment.tz(timezone);
+            
+            const completionMessage = `
+╔═══════════════════════════════════════╗
+║        ✅ TIMEZONE SET SUCCESSFULLY    ║
+╚═══════════════════════════════════════╝
+
+🌍 *Your timezone has been set to:*
+**${displayName}**
+
+📅 *Current time in your timezone:* ${currentTime.format('MMM D, YYYY [at] h:mm A')}
+
+╔═══════════════════════════════════════╗
+║         🚀 QUICK START GUIDE          ║
+╚═══════════════════════════════════════╝
+
+*Ready to create your first reminder?*
+
+💡 **Try these commands:**
+• /reminder - Create a custom reminder
+• /medicine - Set up medicine reminders
+• /help - See all available commands
+
+🔒 **Your data is safe:** All reminders are linked to your phone number, so you'll never lose them even if you log out and back in!
+
+⏰ **Smart timezone:** All times you enter will be understood in your local timezone (${timezone})
+
+*Ready to get started? Type /help for the complete command list!*`;
+
+            await this.sendBotMessage(message.key.remoteJid, completionMessage, true);
+            
+        } catch (error) {
+            console.error(`Complete timezone setup error for ${userNumber}:`, error.message);
+            await this.sendBotMessage(message.key.remoteJid, 
+                '❌ Failed to save timezone. Please try again.');
         }
     }
 
