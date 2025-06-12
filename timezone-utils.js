@@ -106,15 +106,10 @@ class TimezoneUtils {
             // Remove any non-numeric characters except +
             const cleanNumber = phoneNumber.replace(/[^\d+]/g, '');
             
-            // Enhanced country code to timezone mappings
+            // Common country code to timezone mappings
             const countryTimezones = {
-                // United States & Canada (handle specific area codes for US)
-                '+1': this.getUSTimezoneFromAreaCode(cleanNumber),
-                
-                // India
-                '+91': 'Asia/Calcutta',
-                
-                // Major countries
+                '+91': 'Asia/Calcutta',        // India
+                '+1': 'America/New_York',      // US/Canada (default to EST)
                 '+44': 'Europe/London',        // UK
                 '+86': 'Asia/Shanghai',        // China
                 '+81': 'Asia/Tokyo',           // Japan
@@ -140,49 +135,11 @@ class TimezoneUtils {
                 '+66': 'Asia/Bangkok',         // Thailand
                 '+84': 'Asia/Ho_Chi_Minh',     // Vietnam
                 '+63': 'Asia/Manila',          // Philippines
-                '+82': 'Asia/Seoul',           // South Korea
-                '+886': 'Asia/Taipei',         // Taiwan
-                '+852': 'Asia/Hong_Kong',      // Hong Kong
-                '+853': 'Asia/Macau',          // Macau
-                '+90': 'Europe/Istanbul',      // Turkey
-                '+98': 'Asia/Tehran',          // Iran
-                '+972': 'Asia/Jerusalem',      // Israel
-                '+234': 'Africa/Lagos',        // Nigeria
-                '+254': 'Africa/Nairobi',      // Kenya
-                '+256': 'Africa/Kampala',      // Uganda
-                '+260': 'Africa/Lusaka',       // Zambia
-                '+263': 'Africa/Harare',       // Zimbabwe
-                '+31': 'Europe/Amsterdam',     // Netherlands
-                '+32': 'Europe/Brussels',      // Belgium
-                '+41': 'Europe/Zurich',        // Switzerland
-                '+43': 'Europe/Vienna',        // Austria
-                '+45': 'Europe/Copenhagen',    // Denmark
-                '+46': 'Europe/Stockholm',     // Sweden
-                '+47': 'Europe/Oslo',          // Norway
-                '+358': 'Europe/Helsinki',     // Finland
-                '+351': 'Europe/Lisbon',       // Portugal
-                '+30': 'Europe/Athens',        // Greece
-                '+420': 'Europe/Prague',       // Czech Republic
-                '+48': 'Europe/Warsaw',        // Poland
-                '+36': 'Europe/Budapest',      // Hungary
-                '+40': 'Europe/Bucharest',     // Romania
-                '+359': 'Europe/Sofia',        // Bulgaria
-                '+385': 'Europe/Zagreb',       // Croatia
-                '+381': 'Europe/Belgrade',     // Serbia
-                '+380': 'Europe/Kiev',         // Ukraine
-                '+375': 'Europe/Minsk',        // Belarus
-                '+370': 'Europe/Vilnius',      // Lithuania
-                '+371': 'Europe/Riga',         // Latvia
-                '+372': 'Europe/Tallinn',      // Estonia
             };
 
             // Find matching country code
             for (const [countryCode, timezone] of Object.entries(countryTimezones)) {
                 if (cleanNumber.startsWith(countryCode)) {
-                    // If it's a function (like US detection), call it
-                    if (typeof timezone === 'function') {
-                        return timezone;
-                    }
                     return timezone;
                 }
             }
@@ -191,213 +148,6 @@ class TimezoneUtils {
         } catch (error) {
             console.error('Phone number timezone detection error:', error.message);
             return null;
-        }
-    }
-
-    /**
-     * Get US timezone from area code (handles Fort Wayne and other US cities)
-     * @param {string} phoneNumber - Full US phone number with +1
-     * @returns {string} - US timezone
-     */
-    getUSTimezoneFromAreaCode(phoneNumber) {
-        try {
-            // Extract area code (first 3 digits after +1)
-            const areaCodeMatch = phoneNumber.match(/^\+1(\d{3})/);
-            if (!areaCodeMatch) {
-                return 'America/New_York'; // Default to Eastern
-            }
-            
-            const areaCode = areaCodeMatch[1];
-            
-            // US Area Code to Timezone mapping
-            const usAreaCodes = {
-                // Eastern Time Zone (EST/EDT)
-                '212': 'America/New_York',    // New York City
-                '646': 'America/New_York',    // New York City
-                '347': 'America/New_York',    // New York City
-                '718': 'America/New_York',    // New York City
-                '917': 'America/New_York',    // New York City
-                '929': 'America/New_York',    // New York City
-                '201': 'America/New_York',    // New Jersey
-                '973': 'America/New_York',    // New Jersey
-                '215': 'America/New_York',    // Philadelphia
-                '267': 'America/New_York',    // Philadelphia
-                '445': 'America/New_York',    // Philadelphia
-                '484': 'America/New_York',    // Pennsylvania
-                '610': 'America/New_York',    // Pennsylvania
-                '717': 'America/New_York',    // Pennsylvania
-                '412': 'America/New_York',    // Pittsburgh
-                '404': 'America/New_York',    // Atlanta
-                '678': 'America/New_York',    // Atlanta
-                '770': 'America/New_York',    // Atlanta
-                '470': 'America/New_York',    // Atlanta
-                '305': 'America/New_York',    // Miami
-                '786': 'America/New_York',    // Miami
-                '954': 'America/New_York',    // Fort Lauderdale
-                '561': 'America/New_York',    // West Palm Beach
-                '407': 'America/New_York',    // Orlando
-                '321': 'America/New_York',    // Orlando
-                '727': 'America/New_York',    // St. Petersburg
-                '813': 'America/New_York',    // Tampa
-                '850': 'America/New_York',    // Tallahassee
-                '904': 'America/New_York',    // Jacksonville
-                
-                // Central Time Zone (CST/CDT)
-                '312': 'America/Chicago',     // Chicago
-                '773': 'America/Chicago',     // Chicago
-                '872': 'America/Chicago',     // Chicago
-                '708': 'America/Chicago',     // Chicago suburbs
-                '630': 'America/Chicago',     // Chicago suburbs
-                '847': 'America/Chicago',     // Chicago suburbs
-                '224': 'America/Chicago',     // Chicago suburbs
-                '331': 'America/Chicago',     // Chicago suburbs
-                '346': 'America/Chicago',     // Houston
-                '713': 'America/Chicago',     // Houston
-                '281': 'America/Chicago',     // Houston
-                '832': 'America/Chicago',     // Houston
-                '409': 'America/Chicago',     // Beaumont
-                '430': 'America/Chicago',     // Northeast Texas
-                '903': 'America/Chicago',     // Tyler
-                '940': 'America/Chicago',     // Wichita Falls
-                '972': 'America/Chicago',     // Dallas
-                '214': 'America/Chicago',     // Dallas
-                '469': 'America/Chicago',     // Dallas
-                '945': 'America/Chicago',     // Dallas
-                '817': 'America/Chicago',     // Fort Worth
-                '430': 'America/Chicago',     // Northeast Texas
-                '512': 'America/Chicago',     // Austin
-                '737': 'America/Chicago',     // Austin
-                '210': 'America/Chicago',     // San Antonio
-                '726': 'America/Chicago',     // San Antonio
-                '956': 'America/Chicago',     // Laredo
-                '979': 'America/Chicago',     // College Station
-                
-                // Mountain Time Zone (MST/MDT)
-                '303': 'America/Denver',      // Denver
-                '720': 'America/Denver',      // Denver
-                '970': 'America/Denver',      // Fort Collins
-                '719': 'America/Denver',      // Colorado Springs
-                '505': 'America/Denver',      // New Mexico
-                '575': 'America/Denver',      // New Mexico
-                '406': 'America/Denver',      // Montana
-                '307': 'America/Denver',      // Wyoming
-                '435': 'America/Denver',      // Utah
-                '801': 'America/Denver',      // Salt Lake City
-                '385': 'America/Denver',      // Salt Lake City
-                '208': 'America/Denver',      // Idaho
-                '480': 'America/Phoenix',     // Phoenix (Arizona - no DST)
-                '602': 'America/Phoenix',     // Phoenix
-                '623': 'America/Phoenix',     // Phoenix
-                '928': 'America/Phoenix',     // Arizona
-                '520': 'America/Phoenix',     // Arizona
-                
-                // Pacific Time Zone (PST/PDT)
-                '213': 'America/Los_Angeles', // Los Angeles
-                '323': 'America/Los_Angeles', // Los Angeles
-                '310': 'America/Los_Angeles', // Los Angeles
-                '424': 'America/Los_Angeles', // Los Angeles
-                '747': 'America/Los_Angeles', // Los Angeles
-                '818': 'America/Los_Angeles', // Los Angeles
-                '661': 'America/Los_Angeles', // California
-                '805': 'America/Los_Angeles', // California
-                '831': 'America/Los_Angeles', // California
-                '408': 'America/Los_Angeles', // San Jose
-                '669': 'America/Los_Angeles', // San Jose
-                '415': 'America/Los_Angeles', // San Francisco
-                '628': 'America/Los_Angeles', // San Francisco
-                '510': 'America/Los_Angeles', // Oakland
-                '925': 'America/Los_Angeles', // California
-                '650': 'America/Los_Angeles', // California
-                '707': 'America/Los_Angeles', // California
-                '916': 'America/Los_Angeles', // Sacramento
-                '279': 'America/Los_Angeles', // Sacramento
-                '530': 'America/Los_Angeles', // Northern California
-                '559': 'America/Los_Angeles', // Fresno
-                '209': 'America/Los_Angeles', // Stockton
-                '951': 'America/Los_Angeles', // Riverside
-                '760': 'America/Los_Angeles', // San Diego
-                '442': 'America/Los_Angeles', // San Diego
-                '619': 'America/Los_Angeles', // San Diego
-                '858': 'America/Los_Angeles', // San Diego
-                '206': 'America/Los_Angeles', // Seattle
-                '253': 'America/Los_Angeles', // Tacoma
-                '425': 'America/Los_Angeles', // Bellevue
-                '564': 'America/Los_Angeles', // Washington
-                '360': 'America/Los_Angeles', // Washington
-                '509': 'America/Los_Angeles', // Spokane
-                '503': 'America/Los_Angeles', // Portland
-                '971': 'America/Los_Angeles', // Portland
-                '458': 'America/Los_Angeles', // Oregon
-                '541': 'America/Los_Angeles', // Oregon
-                
-                // Indiana (Fort Wayne and other cities)
-                '260': 'America/Indiana/Indianapolis', // Fort Wayne - EASTERN TIME
-                '574': 'America/Indiana/Indianapolis', // South Bend - EASTERN TIME  
-                '765': 'America/Indiana/Indianapolis', // Lafayette - EASTERN TIME
-                '812': 'America/Indiana/Indianapolis', // Southern Indiana - EASTERN TIME
-                '930': 'America/Indiana/Indianapolis', // Indiana - EASTERN TIME
-                '317': 'America/Indiana/Indianapolis', // Indianapolis - EASTERN TIME
-                '463': 'America/Indiana/Indianapolis', // Indianapolis - EASTERN TIME
-                
-                // Alaska
-                '907': 'America/Anchorage',   // Alaska
-                
-                // Hawaii
-                '808': 'Pacific/Honolulu',    // Hawaii
-                
-                // Canada (Eastern)
-                '416': 'America/Toronto',     // Toronto
-                '647': 'America/Toronto',     // Toronto
-                '437': 'America/Toronto',     // Toronto
-                '905': 'America/Toronto',     // Toronto area
-                '289': 'America/Toronto',     // Toronto area
-                '365': 'America/Toronto',     // Ontario
-                '519': 'America/Toronto',     // Ontario
-                '226': 'America/Toronto',     // Ontario
-                '548': 'America/Toronto',     // Ontario
-                '613': 'America/Toronto',     // Ottawa
-                '343': 'America/Toronto',     // Ottawa
-                '514': 'America/Toronto',     // Montreal
-                '438': 'America/Toronto',     // Montreal
-                '450': 'America/Toronto',     // Quebec
-                '579': 'America/Toronto',     // Quebec
-                '418': 'America/Toronto',     // Quebec City
-                '581': 'America/Toronto',     // Quebec
-                '819': 'America/Toronto',     // Quebec
-                '873': 'America/Toronto',     // Quebec
-                '902': 'America/Halifax',     // Nova Scotia
-                '782': 'America/Halifax',     // Nova Scotia
-                '506': 'America/Moncton',     // New Brunswick
-                '709': 'America/St_Johns',    // Newfoundland
-                
-                // Canada (Central)
-                '204': 'America/Winnipeg',    // Manitoba
-                '431': 'America/Winnipeg',    // Manitoba
-                '306': 'America/Regina',      // Saskatchewan
-                '639': 'America/Regina',      // Saskatchewan
-                
-                // Canada (Mountain)
-                '403': 'America/Edmonton',    // Alberta
-                '587': 'America/Edmonton',    // Alberta
-                '780': 'America/Edmonton',    // Alberta
-                '825': 'America/Edmonton',    // Alberta
-                
-                // Canada (Pacific)
-                '604': 'America/Vancouver',   // British Columbia
-                '778': 'America/Vancouver',   // British Columbia
-                '236': 'America/Vancouver',   // British Columbia
-                '250': 'America/Vancouver',   // British Columbia
-                '672': 'America/Vancouver',   // British Columbia
-                
-                // Default for unmapped area codes
-            };
-
-            // Return timezone for the area code, or default to Eastern
-            return usAreaCodes[areaCode] || 'America/New_York';
-            
-        } catch (error) {
-            console.error('US area code timezone detection error:', error.message);
-            return 'America/New_York';
         }
     }
 
