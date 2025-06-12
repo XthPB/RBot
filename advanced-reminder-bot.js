@@ -18,7 +18,7 @@ class AdvancedReminderBot {
         this.startTime = Date.now();
         this.formatter = new MessageFormatter();
         this.timezoneUtils = new TimezoneUtils();
-        this.userTimezone = null; // Will be auto-detected per user
+        this.userTimezone = 'Asia/Calcutta'; // Fixed to Indian timezone
         
         if (this.sock) {
             this.isReady = true;
@@ -1498,11 +1498,54 @@ Would you like to continue this reminder?
         }
     }
 
-    // Enhanced timezone-aware date parsing
+    // Simple Indian timezone date parsing
     parseDate(dateString) {
         try {
-            const userTimezone = this.userTimezone || this.timezoneUtils.defaultTimezone;
-            return this.timezoneUtils.parseUserDate(dateString, userTimezone);
+            const input = dateString.toLowerCase().trim();
+            const now = moment.tz('Asia/Calcutta');
+            
+            // Handle relative dates
+            if (input === 'today') {
+                return now.clone().startOf('day');
+            }
+            if (input === 'tomorrow') {
+                return now.clone().add(1, 'day').startOf('day');
+            }
+            
+            // Handle weekdays
+            const weekdays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+            for (let i = 0; i < weekdays.length; i++) {
+                if (input.includes(`next ${weekdays[i]}`)) {
+                    return now.clone().day(i + 7).startOf('day');
+                }
+                if (input === weekdays[i]) {
+                    const nextDay = now.clone().day(i).startOf('day');
+                    return nextDay.isBefore(now, 'day') ? nextDay.add(7, 'days') : nextDay;
+                }
+            }
+            
+            // Try parsing different date formats
+            const dateFormats = [
+                'YYYY-MM-DD', 'DD-MM-YYYY', 'DD/MM/YYYY', 'MM/DD/YYYY',
+                'MMMM D', 'MMM D', 'MMMM D, YYYY', 'MMM D, YYYY'
+            ];
+            
+            for (const format of dateFormats) {
+                const parsed = moment.tz(dateString, format, 'Asia/Calcutta', true);
+                if (parsed.isValid()) {
+                    // If no year specified, assume current year or next year if date has passed
+                    if (!format.includes('YYYY')) {
+                        parsed.year(now.year());
+                        if (parsed.isBefore(now, 'day')) {
+                            parsed.add(1, 'year');
+                        }
+                    }
+                    return parsed.startOf('day');
+                }
+            }
+            
+            console.log(`❌ Could not parse date: "${dateString}"`);
+            return null;
         } catch (error) {
             console.error('Date parsing error:', error.message);
             return null;
@@ -1511,22 +1554,60 @@ Would you like to continue this reminder?
 
     parseTime(timeString, date) {
         try {
-            const userTimezone = this.userTimezone || this.timezoneUtils.defaultTimezone;
+            const input = timeString.toLowerCase().trim();
             
-            // Parse the time string in user's timezone context
-            const parsedTime = this.timezoneUtils.parseUserTime(timeString, userTimezone, date);
+            console.log(`🕐 Parsing time: "${timeString}" for date: ${date.format('YYYY-MM-DD')}`);
             
-            if (parsedTime) {
-                // Create a proper timezone-aware moment combining date and time
-                const combinedDateTime = moment.tz(
-                    `${date.format('YYYY-MM-DD')} ${parsedTime.format('HH:mm:ss')}`,
-                    'YYYY-MM-DD HH:mm:ss',
-                    userTimezone
-                );
-                
-                return combinedDateTime;
+            // Handle special keywords
+            if (input === 'noon') {
+                return date.clone().hour(12).minute(0).second(0);
+            }
+            if (input === 'midnight') {
+                return date.clone().hour(0).minute(0).second(0);
+            }
+            if (input === 'morning') {
+                return date.clone().hour(9).minute(0).second(0);
+            }
+            if (input === 'afternoon') {
+                return date.clone().hour(14).minute(0).second(0);
+            }
+            if (input === 'evening') {
+                return date.clone().hour(18).minute(0).second(0);
+            }
+            if (input === 'night') {
+                return date.clone().hour(21).minute(0).second(0);
+            }
+
+            // Parse time formats - try each one
+            const timeFormats = [
+                'h:mm A',   // 9:30 AM
+                'h A',      // 9 AM
+                'ha',       // 9am
+                'h:mm a',   // 9:30 am
+                'h a',      // 9 am
+                'HH:mm',    // 14:30
+                'H:mm',     // 9:30
+                'HH',       // 14
+                'H'         // 9
+            ];
+            
+            for (const format of timeFormats) {
+                const timeOnly = moment(timeString, format, true);
+                if (timeOnly.isValid()) {
+                    console.log(`✅ Parsed time "${timeString}" with format "${format}" -> ${timeOnly.hour()}:${timeOnly.minute()}`);
+                    
+                    // Combine with the date in Indian timezone
+                    const combined = date.clone()
+                        .hour(timeOnly.hour())
+                        .minute(timeOnly.minute())
+                        .second(0);
+                    
+                    console.log(`✅ Combined datetime: ${combined.format('YYYY-MM-DD HH:mm:ss')} (IST)`);
+                    return combined;
+                }
             }
             
+            console.log(`❌ Could not parse time: "${timeString}"`);
             return null;
         } catch (error) {
             console.error('Time parsing error:', error.message);

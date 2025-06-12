@@ -96,11 +96,13 @@ ${'─'.repeat(12)}
 🕐 Type the time:`;
     }
 
-    reminderConfirmation(activity, dateTime, userTimezone = null) {
-        // Use timezone-aware current time for accurate calculation
-        const now = userTimezone ? moment.tz(userTimezone) : moment();
+    reminderConfirmation(activity, dateTime, userTimezone = 'Asia/Calcutta') {
+        // Use Indian timezone for accurate calculation
+        const now = moment.tz('Asia/Calcutta');
         const timeDiff = dateTime.diff(now);
         let timeToGo;
+        
+        console.log(`🕐 Time calculation: Now=${now.format('YYYY-MM-DD HH:mm:ss')}, Reminder=${dateTime.format('YYYY-MM-DD HH:mm:ss')}, Diff=${timeDiff}ms`);
         
         if (timeDiff < 0) {
             timeToGo = 'in the past';
@@ -125,10 +127,12 @@ ${'─'.repeat(16)}
     reminderSuccess(data) {
         const { activity, dateTime, id, userTimezone } = data;
         
-        // Use timezone-aware current time for accurate calculation
-        const now = userTimezone ? moment.tz(userTimezone) : moment();
+        // Use Indian timezone for accurate calculation
+        const now = moment.tz('Asia/Calcutta');
         const timeDiff = dateTime.diff(now);
         let timeToGo;
+        
+        console.log(`🕐 Success time calculation: Now=${now.format('YYYY-MM-DD HH:mm:ss')}, Reminder=${dateTime.format('YYYY-MM-DD HH:mm:ss')}, Diff=${timeDiff}ms`);
         
         if (timeDiff < 0) {
             timeToGo = 'in the past';
