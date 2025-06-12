@@ -171,20 +171,17 @@ class AdvancedReminderBot {
         try {
             if (!this.sock || !this.authenticatedPhoneNumber) return;
 
-            const timezoneMessage = `
-╔═══════════════════════════════════════╗
-║           🎉 WELCOME TO RBOT!         ║
-╚═══════════════════════════════════════╝
+            const timezoneMessage = `🎉 *WELCOME TO RBOT!*
 
 ✨ *Your personal WhatsApp reminder assistant*
 
 🌍 *To provide accurate reminders, please select your timezone:*
 
-**Choose your location:**
-• Type "1" for **India** (Asia/Calcutta - IST)
-• Type "2" for **Fort Wayne, Indiana, US** (America/Indiana/Indianapolis - EST/EDT)
+*Choose your location:*
+• Type *1* for *India* (Asia/Calcutta - IST)
+• Type *2* for *Fort Wayne, Indiana, US* (America/Indiana/Indianapolis - EST/EDT)
 
-💡 *This ensures all your reminders are scheduled in your local time.*
+💡 This ensures all your reminders are scheduled in your local time.
 
 🔢 *Please type 1 or 2:*`;
 
@@ -1739,30 +1736,25 @@ Would you like to continue this reminder?
             // Send completion message with selected timezone
             const currentTime = moment.tz(timezone);
             
-            const completionMessage = `
-╔═══════════════════════════════════════╗
-║        ✅ TIMEZONE SET SUCCESSFULLY    ║
-╚═══════════════════════════════════════╝
+            const completionMessage = `✅ *TIMEZONE SET SUCCESSFULLY*
 
 🌍 *Your timezone has been set to:*
-**${displayName}**
+*${displayName}*
 
 📅 *Current time in your timezone:* ${currentTime.format('MMM D, YYYY [at] h:mm A')}
 
-╔═══════════════════════════════════════╗
-║         🚀 QUICK START GUIDE          ║
-╚═══════════════════════════════════════╝
+🚀 *QUICK START GUIDE*
 
 *Ready to create your first reminder?*
 
-💡 **Try these commands:**
+💡 *Try these commands:*
 • /reminder - Create a custom reminder
 • /medicine - Set up medicine reminders
 • /help - See all available commands
 
-🔒 **Your data is safe:** All reminders are linked to your phone number, so you'll never lose them even if you log out and back in!
+🔒 *Your data is safe:* All reminders are linked to your phone number, so you'll never lose them even if you log out and back in!
 
-⏰ **Smart timezone:** All times you enter will be understood in your local timezone (${timezone})
+⏰ *Smart timezone:* All times you enter will be understood in your local timezone (${timezone})
 
 *Ready to get started? Type /help for the complete command list!*`;
 
