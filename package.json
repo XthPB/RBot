@@ -21,7 +21,9 @@
     "health": "curl -f http://localhost:3000/health || echo 'Health check failed'",
     "logs": "echo 'Check Railway dashboard for deployment logs'",
     "backup:sessions": "echo 'Sessions are automatically backed up every 30 seconds'",
-    "restore:sessions": "echo 'Sessions will be automatically restored on next deployment'"
+    "restore:sessions": "echo 'Sessions will be automatically restored on next deployment'",
+    "build": "echo 'No build step required'",
+    "deploy:vercel": "bash deploy-to-vercel.sh"
   },
   "keywords": [
     "whatsapp",
