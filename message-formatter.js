@@ -96,9 +96,9 @@ ${'─'.repeat(12)}
 🕐 Type the time:`;
     }
 
-    reminderConfirmation(activity, dateTime) {
-        // Ensure we're calculating fromNow() correctly with current time
-        const now = moment();
+    reminderConfirmation(activity, dateTime, userTimezone = null) {
+        // Use timezone-aware current time for accurate calculation
+        const now = userTimezone ? moment.tz(userTimezone) : moment();
         const timeDiff = dateTime.diff(now);
         let timeToGo;
         
@@ -123,10 +123,10 @@ ${'─'.repeat(16)}
     }
 
     reminderSuccess(data) {
-        const { activity, dateTime, id } = data;
+        const { activity, dateTime, id, userTimezone } = data;
         
-        // Ensure we're calculating fromNow() correctly with current time
-        const now = moment();
+        // Use timezone-aware current time for accurate calculation
+        const now = userTimezone ? moment.tz(userTimezone) : moment();
         const timeDiff = dateTime.diff(now);
         let timeToGo;
         
@@ -211,7 +211,7 @@ ${'─'.repeat(16)}
     }
 
     // List reminders
-    remindersList(reminders) {
+    remindersList(reminders, userTimezone = null) {
         if (reminders.length === 0) {
             return `${this.emojis.list} *YOUR REMINDERS*
 ${'─'.repeat(16)}
@@ -234,7 +234,10 @@ ${'─'.repeat(16)}
         if (pending.length > 0) {
             message += `\n\n⏳ *PENDING (${pending.length}):*`;
             pending.slice(0, 5).forEach(r => {
-                const time = moment(r.reminder_time);
+                // Convert UTC time from database to user's timezone
+                const time = userTimezone ? 
+                    moment.tz(r.reminder_time, 'UTC').tz(userTimezone) : 
+                    moment(r.reminder_time);
                 message += `\n\n🔸 #${r.id} ${r.message}`;
                 message += `\n   📅 ${time.format('MMM D, h:mm A')}`;
                 message += `\n   ⏱️ ${time.fromNow()}`;
@@ -244,7 +247,10 @@ ${'─'.repeat(16)}
         if (completed.length > 0) {
             message += `\n\n✅ *COMPLETED (${completed.length}):*`;
             completed.slice(0, 3).forEach(r => {
-                const time = moment(r.reminder_time);
+                // Convert UTC time from database to user's timezone
+                const time = userTimezone ? 
+                    moment.tz(r.reminder_time, 'UTC').tz(userTimezone) : 
+                    moment(r.reminder_time);
                 message += `\n\n🔹 #${r.id} ${r.message}`;
                 message += `\n   📅 ${time.format('MMM D, h:mm A')}`;
             });

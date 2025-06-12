@@ -384,6 +384,43 @@ class TimezoneUtils {
             return this.defaultTimezone;
         }
     }
+
+    /**
+     * Get current time in a specific timezone
+     * @param {string} userTimezone - User's timezone
+     * @returns {moment.Moment} - Current time in user timezone
+     */
+    getCurrentTimeInTimezone(userTimezone) {
+        try {
+            const timezone = userTimezone || this.defaultTimezone;
+            return moment.tz(timezone);
+        } catch (error) {
+            console.error('Get current time error:', error.message);
+            return moment.tz(this.defaultTimezone);
+        }
+    }
+
+    /**
+     * Get timezone display name
+     * @param {string} userTimezone - User's timezone
+     * @returns {string} - Human-readable timezone name
+     */
+    getTimezoneDisplayName(userTimezone) {
+        try {
+            const timezone = userTimezone || this.defaultTimezone;
+            const now = moment.tz(timezone);
+            
+            // Create a readable timezone name
+            const zoneName = timezone.replace('_', ' ');
+            const abbreviation = now.format('z');
+            const offset = now.format('Z');
+            
+            return `${zoneName} (${abbreviation}, UTC${offset})`;
+        } catch (error) {
+            console.error('Get timezone display name error:', error.message);
+            return `${userTimezone || this.defaultTimezone} (Local Time)`;
+        }
+    }
 }
 
 module.exports = TimezoneUtils;

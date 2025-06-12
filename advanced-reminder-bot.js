@@ -465,7 +465,9 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
                     return;
                 }
 
-                if (parsedDate.isBefore(moment(), 'day')) {
+                // Use timezone-aware current date for comparison
+                const now = this.userTimezone ? moment.tz(this.userTimezone) : moment();
+                if (parsedDate.isBefore(now, 'day')) {
                     const pastErrorMessage = this.formatter.errorMessage('past');
                     await this.sendBotMessage(message.key.remoteJid, pastErrorMessage);
                     return;
@@ -487,7 +489,9 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
                     return;
                 }
 
-                if (parsedTime.isBefore(moment())) {
+                // Use timezone-aware current time for comparison
+                const currentTime = this.userTimezone ? moment.tz(this.userTimezone) : moment();
+                if (parsedTime.isBefore(currentTime)) {
                     const pastTimeErrorMessage = this.formatter.errorMessage('past');
                     await this.sendBotMessage(message.key.remoteJid, pastTimeErrorMessage);
                     return;
@@ -498,7 +502,8 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
 
                 const confirmMessage = this.formatter.reminderConfirmation(
                     session.data.activity,
-                    parsedTime
+                    parsedTime,
+                    this.userTimezone
                 );
                 await this.sendBotMessage(message.key.remoteJid, confirmMessage);
                 break;
@@ -538,7 +543,8 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
             const successMessage = this.formatter.reminderSuccess({
                 activity,
                 dateTime, // Keep original timezone for display
-                id: reminderId
+                id: reminderId,
+                userTimezone: this.userTimezone
             });
             await this.sendBotMessage(message.key.remoteJid, successMessage);
             this.userSessions.delete(userNumber);
@@ -555,7 +561,7 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
     async listReminders(message, userNumber) {
         try {
             const reminders = await this.db.getUserReminders(userNumber, 20);
-            const listMessage = this.formatter.remindersList(reminders);
+            const listMessage = this.formatter.remindersList(reminders, this.userTimezone);
             await this.sendBotMessage(message.key.remoteJid, listMessage);
 
         } catch (error) {
