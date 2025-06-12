@@ -135,6 +135,14 @@ class AdvancedReminderBot {
             let userInfo = await this.db.getUserInfo(this.authenticatedPhoneNumber);
             
             console.log(`🔍 Checking user: ${this.authenticatedPhoneNumber}, found:`, userInfo ? 'YES' : 'NO');
+            if (userInfo) {
+                console.log(`📋 User details:`, {
+                    name: userInfo.name,
+                    timezone: userInfo.timezone,
+                    createdAt: userInfo.createdAt,
+                    phone: this.authenticatedPhoneNumber
+                });
+            }
             
             if (!userInfo) {
                 // Create new user account with Indian timezone
