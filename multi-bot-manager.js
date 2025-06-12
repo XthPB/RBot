@@ -486,10 +486,7 @@ class MultiBotManager {
 
     async sendWelcomeMessage(botInstance) {
         try {
-            const welcomeMessage = `
-╔═══════════════════════════════════════╗
-║        🎉 WELCOME TO YOUR BOT!         ║
-╚═══════════════════════════════════════╝
+            const welcomeMessage = `🎉 *WELCOME TO YOUR BOT!*
 
 ✅ *Your personal WhatsApp reminder bot is now active!*
 
@@ -497,9 +494,7 @@ class MultiBotManager {
 🤖 *Bot ID:* ${botInstance.userId}
 📱 *Connected:* ${botInstance.authenticatedPhoneNumber}
 
-╔═══════════════════════════════════════╗
-║            🚀 QUICK START              ║
-╚═══════════════════════════════════════╝
+🚀 *QUICK START*
 
 Try these commands:
 • */reminder* - Create a new reminder
