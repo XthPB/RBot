@@ -128,15 +128,16 @@ class AdvancedReminderBot {
         try {
             if (!this.authenticatedPhoneNumber) return;
 
-            // Auto-detect user timezone based on phone number
-            const detectedTimezone = await this.timezoneUtils.autoDetectTimezone(this.authenticatedPhoneNumber);
-            this.userTimezone = detectedTimezone;
+            // Use fixed Indian timezone
+            this.userTimezone = 'Asia/Calcutta';
 
             // Check if user exists in database
             let userInfo = await this.db.getUserInfo(this.authenticatedPhoneNumber);
             
+            console.log(`🔍 Checking user: ${this.authenticatedPhoneNumber}, found:`, userInfo ? 'YES' : 'NO');
+            
             if (!userInfo) {
-                // Create new user account with detected timezone
+                // Create new user account with Indian timezone
                 await this.db.addUser(this.authenticatedPhoneNumber, 'User', this.userTimezone);
                 console.log(`📝 Created new user account: ${this.authenticatedPhoneNumber} (${this.userTimezone})`);
                 
@@ -146,14 +147,10 @@ class AdvancedReminderBot {
                 // Welcome back existing user
                 console.log(`👋 Welcome back user: ${this.authenticatedPhoneNumber} (${userInfo.name}) - Timezone: ${userInfo.timezone || this.userTimezone}`);
                 
-                // Update user timezone if different from stored
-                if (userInfo.timezone !== this.userTimezone) {
-                    await this.db.addUser(this.authenticatedPhoneNumber, userInfo.name, this.userTimezone);
-                    console.log(`🕐 Updated timezone for ${this.authenticatedPhoneNumber}: ${userInfo.timezone} → ${this.userTimezone}`);
-                }
+                // Use stored timezone if available, otherwise use Indian timezone
+                this.userTimezone = userInfo.timezone || 'Asia/Calcutta';
                 
-                // Use stored timezone if available
-                this.userTimezone = userInfo.timezone || this.userTimezone;
+                // Send welcome back message
                 await this.sendWelcomeBackMessage(userInfo);
             }
 
@@ -173,8 +170,8 @@ class AdvancedReminderBot {
         try {
             if (!this.sock) return;
             
-            const currentTime = this.timezoneUtils.getCurrentTimeInTimezone(this.userTimezone);
-            const timezoneDisplayName = this.timezoneUtils.getTimezoneDisplayName(this.userTimezone);
+            const currentTime = moment.tz('Asia/Calcutta');
+            const timezoneDisplayName = 'India Standard Time (IST, UTC+05:30)';
             
             const welcomeMessage = `
 ╔═══════════════════════════════════════╗
@@ -229,8 +226,8 @@ class AdvancedReminderBot {
             const reminders = await this.db.getUserReminders(this.authenticatedPhoneNumber, 5);
             const totalReminders = await this.db.getUserReminders(this.authenticatedPhoneNumber, 1000);
             
-            const currentTime = this.timezoneUtils.getCurrentTimeInTimezone(this.userTimezone);
-            const timezoneDisplayName = this.timezoneUtils.getTimezoneDisplayName(this.userTimezone);
+            const currentTime = moment.tz('Asia/Calcutta');
+            const timezoneDisplayName = 'India Standard Time (IST, UTC+05:30)';
             
             const welcomeBackMessage = `
 ╔═══════════════════════════════════════╗
@@ -256,7 +253,7 @@ ${reminders.length > 0 ? `
 
 ${reminders.slice(0, 3).map((r, i) => 
 `${i + 1}. ${r.message}
-   📅 ${moment.tz(r.reminder_time, this.userTimezone).format('MMM D [at] h:mm A')}`
+   📅 ${moment.tz(r.reminder_time, 'UTC').tz('Asia/Calcutta').format('MMM D [at] h:mm A')}`
 ).join('\n\n')}
 
 ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
