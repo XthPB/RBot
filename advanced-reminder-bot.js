@@ -123,21 +123,23 @@ class AdvancedReminderBot {
         }
     }
 
-    // Initialize user account with persistent data
+    // Initialize user account with persistent data and smart timezone detection
     async initializeUserAccount() {
         try {
             if (!this.authenticatedPhoneNumber) return;
 
-            // Use fixed Indian timezone
-            this.userTimezone = 'Asia/Calcutta';
-
-            // Check if user exists in database
+            // Check if user exists in database first
             let userInfo = await this.db.getUserInfo(this.authenticatedPhoneNumber);
             
             console.log(`🔍 Checking user: ${this.authenticatedPhoneNumber}, found:`, userInfo ? 'YES' : 'NO');
             
+            // Auto-detect timezone using enhanced detection
+            const detectedTimezone = await this.timezoneUtils.autoDetectTimezone(this.authenticatedPhoneNumber);
+            console.log(`🌍 Auto-detected timezone: ${detectedTimezone} for ${this.authenticatedPhoneNumber}`);
+            
             if (!userInfo) {
-                // Create new user account with Indian timezone
+                // Create new user account with detected timezone
+                this.userTimezone = detectedTimezone;
                 await this.db.addUser(this.authenticatedPhoneNumber, 'User', this.userTimezone);
                 console.log(`📝 Created new user account: ${this.authenticatedPhoneNumber} (${this.userTimezone})`);
                 
@@ -145,10 +147,21 @@ class AdvancedReminderBot {
                 await this.sendWelcomeMessage();
             } else {
                 // Welcome back existing user
-                console.log(`👋 Welcome back user: ${this.authenticatedPhoneNumber} (${userInfo.name}) - Timezone: ${userInfo.timezone || this.userTimezone}`);
+                console.log(`👋 Welcome back user: ${this.authenticatedPhoneNumber} (${userInfo.name}) - Stored timezone: ${userInfo.timezone}`);
                 
-                // Use stored timezone if available, otherwise use Indian timezone
-                this.userTimezone = userInfo.timezone || 'Asia/Calcutta';
+                // Use stored timezone if available, otherwise use detected timezone
+                const storedTimezone = userInfo.timezone;
+                this.userTimezone = storedTimezone || detectedTimezone;
+                
+                // Check if timezone changed (user might be traveling)
+                if (storedTimezone && storedTimezone !== detectedTimezone) {
+                    console.log(`🌍 Timezone change detected: ${storedTimezone} → ${detectedTimezone}`);
+                    await this.sendTimezoneChangeNotification(storedTimezone, detectedTimezone);
+                } else if (!storedTimezone) {
+                    // Update user with detected timezone if not stored
+                    await this.db.addUser(this.authenticatedPhoneNumber, userInfo.name, detectedTimezone);
+                    this.userTimezone = detectedTimezone;
+                }
                 
                 // Send welcome back message
                 await this.sendWelcomeBackMessage(userInfo);
@@ -162,6 +175,8 @@ class AdvancedReminderBot {
             
         } catch (error) {
             console.error(`User account initialization error for ${this.userId}:`, error.message);
+            // Fallback to default timezone if everything fails
+            this.userTimezone = 'Asia/Calcutta';
         }
     }
 
@@ -170,8 +185,8 @@ class AdvancedReminderBot {
         try {
             if (!this.sock) return;
             
-            const currentTime = moment.tz('Asia/Calcutta');
-            const timezoneDisplayName = 'India Standard Time (IST, UTC+05:30)';
+            const currentTime = this.timezoneUtils.getCurrentTimeInTimezone(this.userTimezone);
+            const timezoneDisplayName = this.timezoneUtils.getTimezoneDisplayName(this.userTimezone);
             
             const welcomeMessage = `
 ╔═══════════════════════════════════════╗
@@ -222,12 +237,15 @@ class AdvancedReminderBot {
         try {
             if (!this.sock) return;
             
-            // Get user's reminder count
+            // Get user's reminder count using the correct phone number
             const reminders = await this.db.getUserReminders(this.authenticatedPhoneNumber, 5);
             const totalReminders = await this.db.getUserReminders(this.authenticatedPhoneNumber, 1000);
             
-            const currentTime = moment.tz('Asia/Calcutta');
-            const timezoneDisplayName = 'India Standard Time (IST, UTC+05:30)';
+            console.log(`📊 Welcome back stats: ${reminders.length} upcoming, ${totalReminders.length} total reminders`);
+            
+            // Use the enhanced timezone utilities for consistent timezone handling
+            const currentTime = this.timezoneUtils.getCurrentTimeInTimezone(this.userTimezone);
+            const timezoneDisplayName = this.timezoneUtils.getTimezoneDisplayName(this.userTimezone);
             
             const welcomeBackMessage = `
 ╔═══════════════════════════════════════╗
@@ -253,7 +271,7 @@ ${reminders.length > 0 ? `
 
 ${reminders.slice(0, 3).map((r, i) => 
 `${i + 1}. ${r.message}
-   📅 ${moment.tz(r.reminder_time, 'UTC').tz('Asia/Calcutta').format('MMM D [at] h:mm A')}`
+   📅 ${this.timezoneUtils.formatForUser(moment.tz(r.reminder_time, 'UTC'), this.userTimezone, 'MMM D [at] h:mm A')}`
 ).join('\n\n')}
 
 ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
@@ -276,13 +294,18 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
 • /medicine - Medicine reminders  
 • /list - View all reminders
 • /help - Complete command guide
+• /timezone - View/change your timezone
 
 🔒 **Data Persistence:** Your reminders are always linked to your phone number - no data loss, ever!
-⏰ **Smart timezone:** All times are shown in your local timezone (${this.userTimezone})`;
+⏰ **Smart timezone:** All times are shown in your local timezone (${this.userTimezone})
+
+🌍 **Global Ready:** This bot works worldwide with automatic timezone detection!`;
 
             // Send to user's private chat
             const userJid = `${this.authenticatedPhoneNumber}@s.whatsapp.net`;
             await this.sendBotMessage(userJid, welcomeBackMessage, true);
+            
+            console.log(`👋 Welcome back message sent to ${this.authenticatedPhoneNumber} (${userInfo.name})`);
             
         } catch (error) {
             console.error(`Send welcome back message error for ${this.userId}:`, error.message);
@@ -377,6 +400,14 @@ ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
                 break;
             case '/cancel':
                 await this.cancelCurrentFlow(message, userNumber, chatId);
+                break;
+            case '/timezone':
+            case '/tz':
+                await this.showTimezoneInfo(message, userNumber, chatId);
+                break;
+            case '/settz':
+            case '/settimezone':
+                await this.startTimezoneSetup(message, messageText, userNumber, chatId);
                 break;
             default:
                 const unknownMessage = this.formatter.unknownCommand(command);
@@ -1797,6 +1828,358 @@ Would you like to continue this reminder?
 
         } catch (error) {
             console.error(`Auto-renewal error for ${this.userId}:`, error.message);
+        }
+    }
+
+    // Show timezone information
+    async showTimezoneInfo(message, userNumber, chatId) {
+        try {
+            const timezoneInfo = this.timezoneUtils.getTimezoneInfo(this.userTimezone);
+            const currentTime = this.timezoneUtils.getCurrentTimeInTimezone(this.userTimezone);
+            
+            const timezoneMessage = `
+╔═══════════════════════════════════════╗
+║           🌍 TIMEZONE INFO             ║
+╚═══════════════════════════════════════╝
+
+🕐 *Your current timezone:* ${timezoneInfo.name}
+📍 *Display name:* ${this.timezoneUtils.getTimezoneDisplayName(this.userTimezone)}
+🔢 *UTC offset:* ${timezoneInfo.offset} (${timezoneInfo.offsetMinutes} minutes)
+📅 *Current local time:* ${currentTime.format('dddd, MMMM Do, YYYY [at] h:mm:ss A')}
+⏰ *UTC time:* ${timezoneInfo.utcTime}
+${timezoneInfo.isDST ? '☀️ *Daylight Saving:* Active' : '🕐 *Standard Time:* Active'}
+
+╔═══════════════════════════════════════╗
+║         🌍 CHANGE TIMEZONE             ║
+╚═══════════════════════════════════════╝
+
+Want to change your timezone?
+
+💡 **Examples:**
+• /settz America/Indiana/Indianapolis (Fort Wayne)
+• /settz Europe/London (London, UK)
+• /settz Asia/Tokyo (Tokyo, Japan)
+• /settz America/New_York (New York, USA)
+• /settz Australia/Sydney (Sydney, Australia)
+
+🔄 *Auto-detection:* Your timezone is automatically detected from your phone number, but you can override it anytime.
+
+🌐 *Traveling?* The bot will detect timezone changes and ask if you want to update.`;
+
+            await this.sendBotMessage(chatId, timezoneMessage);
+            
+        } catch (error) {
+            console.error('Show timezone info error:', error.message);
+            await this.sendBotMessage(chatId, '❌ Failed to get timezone information.');
+        }
+    }
+
+    // Start timezone setup flow
+    async startTimezoneSetup(message, messageText, userNumber, chatId) {
+        try {
+            const parts = messageText.split(' ');
+            
+            if (parts.length < 2) {
+                const setupMessage = `
+╔═══════════════════════════════════════╗
+║         🌍 SET YOUR TIMEZONE           ║
+╚═══════════════════════════════════════╝
+
+🕐 *Current timezone:* ${this.userTimezone}
+
+**How to set timezone:**
+
+💡 **Method 1:** Use timezone name
+• /settz America/Indiana/Indianapolis
+• /settz Europe/London  
+• /settz Asia/Tokyo
+
+💡 **Method 2:** Use city name
+• /settz fort wayne
+• /settz london
+• /settz tokyo
+
+💡 **Method 3:** Use abbreviation
+• /settz EST
+• /settz PST
+• /settz IST
+
+🌍 **Popular timezones:**
+┌─────────────────────────────────────┐
+│ • America/New_York (Eastern US)     │
+│ • America/Chicago (Central US)      │
+│ • America/Denver (Mountain US)      │
+│ • America/Los_Angeles (Pacific US)  │
+│ • America/Indiana/Indianapolis (EST)│
+│ • Europe/London (UK)                │
+│ • Asia/Tokyo (Japan)                │
+│ • Australia/Sydney (Australia)      │
+│ • Asia/Calcutta (India)             │
+└─────────────────────────────────────┘
+
+*Type the timezone you want to use:*`;
+
+                await this.sendBotMessage(chatId, setupMessage);
+                
+                // Set up timezone session
+                this.userSessions.set(userNumber, {
+                    flow: 'timezone',
+                    step: 'input',
+                    data: {},
+                    startTime: Date.now()
+                });
+                
+                return;
+            }
+
+            // Extract timezone from command
+            const inputTimezone = parts.slice(1).join(' ').trim();
+            await this.processTimezoneInput(message, inputTimezone, userNumber, chatId);
+            
+        } catch (error) {
+            console.error('Start timezone setup error:', error.message);
+            await this.sendBotMessage(chatId, '❌ Failed to start timezone setup.');
+        }
+    }
+
+    // Process timezone input
+    async processTimezoneInput(message, inputTimezone, userNumber, chatId) {
+        try {
+            // Try to detect/validate the timezone
+            const detectedTimezone = this.timezoneUtils.detectUserTimezone(inputTimezone, this.authenticatedPhoneNumber);
+            
+            if (!this.timezoneUtils.isValidTimezone(detectedTimezone)) {
+                const errorMessage = `
+❌ *Invalid timezone:* "${inputTimezone}"
+
+🌍 **Valid examples:**
+• America/Indiana/Indianapolis (Fort Wayne)
+• America/New_York (Eastern US)
+• Europe/London (London, UK)
+• Asia/Tokyo (Tokyo, Japan)
+
+💡 **Try again with a valid timezone name**
+Type /settz followed by the timezone name.`;
+
+                await this.sendBotMessage(chatId, errorMessage);
+                return;
+            }
+
+            // Get timezone info for confirmation
+            const timezoneInfo = this.timezoneUtils.getTimezoneInfo(detectedTimezone);
+            const currentTime = this.timezoneUtils.getCurrentTimeInTimezone(detectedTimezone);
+            
+            const confirmationMessage = `
+╔═══════════════════════════════════════╗
+║         ✅ TIMEZONE DETECTED           ║
+╚═══════════════════════════════════════╝
+
+🌍 *New timezone:* ${detectedTimezone}
+📍 *Display name:* ${this.timezoneUtils.getTimezoneDisplayName(detectedTimezone)}
+🔢 *UTC offset:* ${timezoneInfo.offset}
+📅 *Current time there:* ${currentTime.format('dddd, MMMM Do, YYYY [at] h:mm A')}
+
+╔═══════════════════════════════════════╗
+║            🔄 WHAT CHANGES             ║
+╚═══════════════════════════════════════╝
+
+✅ *All future reminders* will use this timezone
+🕐 *Existing reminders* will be displayed in new timezone
+📅 *All times you enter* will be understood in this timezone
+
+**Do you want to update your timezone?**
+• Type "yes" to confirm
+• Type "no" to cancel`;
+
+            await this.sendBotMessage(chatId, confirmationMessage);
+            
+            // Set up confirmation session
+            this.userSessions.set(userNumber, {
+                flow: 'timezone',
+                step: 'confirm',
+                data: { 
+                    newTimezone: detectedTimezone,
+                    oldTimezone: this.userTimezone
+                },
+                startTime: Date.now()
+            });
+            
+        } catch (error) {
+            console.error('Process timezone input error:', error.message);
+            await this.sendBotMessage(chatId, '❌ Failed to process timezone. Please try again.');
+        }
+    }
+
+    // Handle timezone session flow
+    async handleTimezoneSession(message, messageText, session, userNumber) {
+        try {
+            switch (session.step) {
+                case 'input':
+                    await this.processTimezoneInput(message, messageText, userNumber, message.key.remoteJid);
+                    break;
+                    
+                case 'confirm':
+                    const response = messageText.toLowerCase().trim();
+                    
+                    if (response === 'yes' || response === 'y') {
+                        await this.updateUserTimezone(message, session, userNumber);
+                    } else if (response === 'no' || response === 'n') {
+                        this.userSessions.delete(userNumber);
+                        await this.sendBotMessage(message.key.remoteJid, '❌ Timezone change cancelled. Your timezone remains unchanged.');
+                    } else {
+                        await this.sendBotMessage(message.key.remoteJid, 
+                            '🤔 Please respond with "yes" to confirm or "no" to cancel.');
+                    }
+                    break;
+            }
+        } catch (error) {
+            console.error('Handle timezone session error:', error.message);
+            this.userSessions.delete(userNumber);
+        }
+    }
+
+    // Update user timezone
+    async updateUserTimezone(message, session, userNumber) {
+        try {
+            const { newTimezone, oldTimezone } = session.data;
+            
+            // Update in database
+            const userInfo = await this.db.getUserInfo(userNumber);
+            await this.db.addUser(userNumber, userInfo?.name || 'User', newTimezone);
+            
+            // Update local timezone
+            this.userTimezone = newTimezone;
+            
+            const successMessage = `
+╔═══════════════════════════════════════╗
+║         🎉 TIMEZONE UPDATED            ║
+╚═══════════════════════════════════════╝
+
+✅ *Timezone successfully changed!*
+
+🔄 *Change:* ${oldTimezone} → ${newTimezone}
+🕐 *New display:* ${this.timezoneUtils.getTimezoneDisplayName(newTimezone)}
+📅 *Current time:* ${this.timezoneUtils.getCurrentTimeInTimezone(newTimezone).format('dddd, MMMM Do, YYYY [at] h:mm A')}
+
+╔═══════════════════════════════════════╗
+║           📝 WHAT'S UPDATED            ║
+╚═══════════════════════════════════════╝
+
+✅ All future reminders will use the new timezone
+🔄 Existing reminders are still valid but will display in new timezone
+⏰ All times you enter will be understood in the new timezone
+
+💡 *Type /timezone to view your timezone info anytime*`;
+
+            await this.sendBotMessage(message.key.remoteJid, successMessage);
+            this.userSessions.delete(userNumber);
+            
+            console.log(`🌍 Timezone updated for ${userNumber}: ${oldTimezone} → ${newTimezone}`);
+            
+        } catch (error) {
+            console.error('Update user timezone error:', error.message);
+            await this.sendBotMessage(message.key.remoteJid, '❌ Failed to update timezone. Please try again.');
+        }
+    }
+
+    // Send timezone change notification (for travelers)
+    async sendTimezoneChangeNotification(storedTimezone, detectedTimezone) {
+        try {
+            const userJid = `${this.authenticatedPhoneNumber}@s.whatsapp.net`;
+            
+            const changeNotification = `
+╔═══════════════════════════════════════╗
+║       🌍 TIMEZONE CHANGE DETECTED      ║
+╚═══════════════════════════════════════╝
+
+✈️ *Looks like you might be traveling!*
+
+🕐 *Stored timezone:* ${storedTimezone}
+🌍 *Detected timezone:* ${detectedTimezone}
+
+📍 *Current times:*
+• **Your saved timezone:** ${this.timezoneUtils.getCurrentTimeInTimezone(storedTimezone).format('h:mm A')}
+• **Detected timezone:** ${this.timezoneUtils.getCurrentTimeInTimezone(detectedTimezone).format('h:mm A')}
+
+╔═══════════════════════════════════════╗
+║            🔄 UPDATE OPTIONS           ║
+╚═══════════════════════════════════════╝
+
+Would you like to update your timezone?
+
+💡 **Options:**
+• Type /settz ${detectedTimezone} to update
+• Type /timezone to see current timezone info
+• Do nothing to keep current timezone
+
+🌐 *Your reminders will continue using your saved timezone unless you update it.*`;
+
+            await this.sendBotMessage(userJid, changeNotification, true);
+            
+        } catch (error) {
+            console.error('Send timezone change notification error:', error.message);
+        }
+    }
+
+    // Update session flow handler to include timezone
+    async handleSessionFlow(message, messageText, userNumber) {
+        const session = this.userSessions.get(userNumber);
+        if (!session) return;
+
+        // Session timeout (15 minutes)
+        if (Date.now() - session.startTime > 15 * 60 * 1000) {
+            this.userSessions.delete(userNumber);
+            const timeoutMessage = this.formatter.sessionTimeout();
+            await this.sendBotMessage(message.key.remoteJid, timeoutMessage);
+            return;
+        }
+
+        try {
+            switch (session.flow) {
+                case 'reminder':
+                    await this.handleReminderStep(message, messageText, session, userNumber);
+                    break;
+                case 'delete':
+                    await this.handleDeleteStep(message, messageText, session, userNumber);
+                    break;
+                case 'clear':
+                    await this.handleClearStep(message, messageText, session, userNumber);
+                    break;
+                case 'reschedule':
+                    await this.handleRescheduleStep(message, messageText, session, userNumber);
+                    break;
+                case 'medicine':
+                    await this.handleMedicineStep(message, messageText, session, userNumber);
+                    break;
+                case 'renewal':
+                    await this.handleRenewalStep(message, messageText, session, userNumber);
+                    break;
+                case 'timezone':
+                    await this.handleTimezoneSession(message, messageText, session, userNumber);
+                    break;
+            }
+        } catch (error) {
+            console.error('Session flow error:', error.message);
+            this.userSessions.delete(userNumber);
+        }
+    }
+
+    // Update parsing methods to use timezone utils
+    parseDate(dateString) {
+        try {
+            return this.timezoneUtils.parseUserDate(dateString, this.userTimezone);
+        } catch (error) {
+            console.error('Date parsing error:', error.message);
+            return null;
+        }
+    }
+
+    parseTime(timeString, date) {
+        try {
+            return this.timezoneUtils.parseUserTime(timeString, this.userTimezone, date);
+        } catch (error) {
+            console.error('Time parsing error:', error.message);
+            return null;
         }
     }
 
