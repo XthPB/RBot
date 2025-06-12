@@ -126,43 +126,57 @@ class AdvancedReminderBot {
     // Initialize user account with persistent data
     async initializeUserAccount() {
         try {
-            if (!this.authenticatedPhoneNumber) return;
+            if (!this.authenticatedPhoneNumber) {
+                console.log('❌ No authenticated phone number available');
+                return;
+            }
+
+            console.log(`🔍 Initializing account for: ${this.authenticatedPhoneNumber}`);
 
             // Check if user exists in database first
-            let userInfo = await this.db.getUserInfo(this.authenticatedPhoneNumber);
-            
-            console.log(`🔍 Checking user: ${this.authenticatedPhoneNumber}, found:`, userInfo ? 'YES' : 'NO');
-            if (userInfo) {
-                console.log(`📋 User details:`, {
-                    name: userInfo.name,
-                    timezone: userInfo.timezone,
-                    createdAt: userInfo.createdAt,
-                    phone: this.authenticatedPhoneNumber
-                });
+            let userInfo = null;
+            try {
+                userInfo = await this.db.getUserInfo(this.authenticatedPhoneNumber);
+                console.log(`🔍 Database query result for ${this.authenticatedPhoneNumber}:`, userInfo);
+            } catch (dbError) {
+                console.error('❌ Database query failed:', dbError.message);
+                // Continue with new user flow if database query fails
             }
             
-            if (!userInfo) {
+            if (!userInfo || !userInfo.timezone) {
                 // NEW USER - Ask for timezone preference
                 console.log(`📝 NEW USER detected: ${this.authenticatedPhoneNumber}`);
+                console.log('🌍 Starting timezone selection process...');
                 await this.askUserTimezone();
             } else {
                 // EXISTING USER - Welcome back
-                console.log(`👋 EXISTING USER detected: ${this.authenticatedPhoneNumber} (${userInfo.name})`);
+                console.log(`👋 EXISTING USER detected: ${this.authenticatedPhoneNumber}`);
+                console.log(`📋 User details:`, {
+                    name: userInfo.name,
+                    timezone: userInfo.timezone,
+                    createdAt: userInfo.createdAt
+                });
                 
-                // Use stored timezone if available, otherwise default to Asia/Calcutta
-                this.userTimezone = userInfo.timezone || 'Asia/Calcutta';
+                // Use stored timezone
+                this.userTimezone = userInfo.timezone;
+                console.log(`🕐 Setting timezone to: ${this.userTimezone}`);
                 
                 // Send welcome back message
                 await this.sendWelcomeBackMessage(userInfo);
                 
                 // Update user's active status and last activity
-                await this.db.updateUserLastActivity(this.authenticatedPhoneNumber);
+                try {
+                    await this.db.updateUserLastActivity(this.authenticatedPhoneNumber);
+                } catch (updateError) {
+                    console.error('⚠️ Failed to update last activity:', updateError.message);
+                }
             }
             
-            console.log(`🕐 User timezone set: ${this.userTimezone} for ${this.authenticatedPhoneNumber}`);
-            
         } catch (error) {
-            console.error(`User account initialization error for ${this.userId}:`, error.message);
+            console.error(`❌ User account initialization error for ${this.userId}:`, error.message);
+            // Fallback to new user flow
+            console.log('🔄 Falling back to new user timezone selection...');
+            await this.askUserTimezone();
         }
     }
 
@@ -276,27 +290,19 @@ class AdvancedReminderBot {
                 timezoneDisplayName = userTimezone;
             }
             
-            const welcomeBackMessage = `
-╔═══════════════════════════════════════╗
-║          👋 WELCOME BACK!             ║
-╚═══════════════════════════════════════╝
+            const welcomeBackMessage = `👋 *WELCOME BACK!*
 
 ✨ *Hey ${userInfo.name}! Great to see you again!*
 
 🕐 *Your timezone:* ${timezoneDisplayName}
 📅 *Current time:* ${currentTime.format('MMM D, YYYY [at] h:mm A')}
 
-📊 **Your Reminder Status:**
-┌─────────────────────────────────────┐
-│ • 📋 Total reminders: ${totalReminders.length}        │
-│ • ⏰ Account created: ${moment(userInfo.createdAt).format('MMM D, YYYY')} │
-│ • 🔄 All your data is restored!     │
-└─────────────────────────────────────┘
+📊 *Your Reminder Status:*
+• 📋 Total reminders: ${totalReminders.length}
+• ⏰ Account created: ${moment(userInfo.createdAt).format('MMM D, YYYY')}
+• 🔄 All your data is restored!
 
-${reminders.length > 0 ? `
-╔═══════════════════════════════════════╗
-║       📅 UPCOMING REMINDERS           ║
-╚═══════════════════════════════════════╝
+${reminders.length > 0 ? `📅 *UPCOMING REMINDERS*
 
 ${reminders.slice(0, 3).map((r, i) => 
 `${i + 1}. ${r.message}
@@ -305,27 +311,22 @@ ${reminders.slice(0, 3).map((r, i) =>
 
 ${reminders.length > 3 ? `\n*...and ${reminders.length - 3} more!*` : ''}
 
-💡 *Type /list to see all your reminders*` : `
-╔═══════════════════════════════════════╗
-║         🎯 READY TO START?            ║
-╚═══════════════════════════════════════╝
+💡 *Type /list to see all your reminders*` : `🎯 *READY TO START?*
 
 *No reminders found. Let's create some!*
 
 • /reminder - Create a custom reminder
 • /medicine - Set up medicine reminders`}
 
-╔═══════════════════════════════════════╗
-║         🚀 QUICK ACTIONS              ║
-╚═══════════════════════════════════════╝
+🚀 *QUICK ACTIONS*
 
 • /reminder - Create new reminder
 • /medicine - Medicine reminders  
 • /list - View all reminders
 • /help - Complete command guide
 
-🔒 **Data Persistence:** Your reminders are always linked to your phone number - no data loss, ever!
-⏰ **Smart timezone:** All times are shown in your local timezone (${userTimezone})`;
+🔒 *Data Persistence:* Your reminders are always linked to your phone number - no data loss, ever!
+⏰ *Smart timezone:* All times are shown in your local timezone (${userTimezone})`;
 
             // Send to user's private chat
             const userJid = `${this.authenticatedPhoneNumber}@s.whatsapp.net`;
@@ -1700,22 +1701,26 @@ Would you like to continue this reminder?
     async handleTimezoneSetup(message, messageText, session, userNumber) {
         try {
             const choice = messageText.trim();
+            console.log(`🌍 Timezone choice received: "${choice}" from user ${userNumber}`);
             
             if (choice === '1') {
                 // India timezone selected
+                console.log('🇮🇳 India timezone selected');
                 this.userTimezone = 'Asia/Calcutta';
                 await this.completeTimezoneSetup(message, userNumber, 'Asia/Calcutta', 'India Standard Time (IST, UTC+05:30)');
             } else if (choice === '2') {
                 // Fort Wayne, Indiana timezone selected
+                console.log('🇺🇸 Fort Wayne, Indiana timezone selected');
                 this.userTimezone = 'America/Indiana/Indianapolis';
                 await this.completeTimezoneSetup(message, userNumber, 'America/Indiana/Indianapolis', 'Eastern Time - Fort Wayne, Indiana (EST/EDT, UTC-05:00/-04:00)');
             } else {
+                console.log(`❌ Invalid timezone choice: "${choice}"`);
                 await this.sendBotMessage(message.key.remoteJid, 
-                    '❌ Please type "1" for India or "2" for Fort Wayne, Indiana.');
+                    '❌ Please type *1* for India or *2* for Fort Wayne, Indiana.');
                 return;
             }
         } catch (error) {
-            console.error(`Timezone setup error for ${userNumber}:`, error.message);
+            console.error(`❌ Timezone setup error for ${userNumber}:`, error.message);
             await this.sendBotMessage(message.key.remoteJid, 
                 '❌ Error setting up timezone. Please try again.');
         }
